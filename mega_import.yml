@@ -1,28 +1,18 @@
+# Basic plugin information
 name: MEGA Import
 description: Import files from MEGA.nz cloud storage
 version: 1.0.0
-url: https://github.com/stashapp/stash
-
-# Plugin execution configuration
-exec:
-  - node
-  - "{pluginDir}/mega_import.js"
-interface: raw
 
 # UI configuration
 ui:
   javascript:
-    - mega_import.jsx
-    - register.js
+    - mega_import.js
   css:
     - mega_import.css
-  requires: []
-  assets:
-    /: assets
   csp:
     connect-src:
-      - "https://*.mega.nz"
-      - "https://mega.nz"
+      - 'https://*.mega.nz'
+      - 'https://mega.nz'
 
 # Plugin settings
 settings:
@@ -47,6 +37,12 @@ settings:
     description: Delete downloaded files after successful import
     type: BOOLEAN
     default: true
+
+# Plugin execution configuration
+exec:
+  - node
+  - "{pluginDir}/mega_import.js"
+interface: raw
 
 # Plugin hooks
 hooks:
