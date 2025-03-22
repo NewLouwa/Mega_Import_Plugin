@@ -8,6 +8,7 @@ interface: js
 # UI configuration
 ui:
   javascript:
+    - register.js
     - mega_import.jsx
     - utils/format.js
   css:
@@ -48,5 +49,8 @@ settings:
 tasks:
   - name: Import from MEGA
     description: Import files from MEGA.nz cloud storage
-    exec:
-      - mega_import.js 
+    defaultArgs:
+      paths: []
+    plugin:
+      id: mega_import
+      operation: import 
