@@ -19,6 +19,7 @@ For Stash 0.15.0 and higher:
 3. After successful login, you'll be redirected to the MEGA Cloud Browser page
 4. Browse your MEGA cloud storage and select files to import
 5. Click "Import Selected" to download the selected files to your Stash library
+6. When finished, click "Back to Stash" to return to the main interface
 
 ### Features
 
@@ -29,7 +30,9 @@ For Stash 0.15.0 and higher:
 - Visual file selection with checkboxes
 - Clear path navigation
 - Full-screen browsing experience
+- Easy return to Stash main interface with "Back to Stash" button
 - Account management integrated with the plugin
+- Direct MEGA API integration (uses megajs library)
 
 ## Requirements
 
@@ -41,11 +44,20 @@ For Stash 0.15.0 and higher:
 
 No additional configuration is required. Simply install the plugin and restart Stash.
 
+## Technical Implementation
+
+The plugin uses a modular architecture:
+
+- `MegaApiClient`: A JavaScript module that handles all interactions with the MEGA API
+- `MegaImportComponent`: The main React component that coordinates the UI
+- `MegaBrowserPage`: A dedicated page component for browsing MEGA files
+- Direct integration with the MEGA.nz API via the megajs library
+
 ## Development
 
 This plugin is under active development. Future features will include:
 
-- Full MEGA.nz API integration with secure authentication
+- Enhanced MEGA.nz API integration with secure authentication
 - Advanced file filtering and searching
 - Folder recursive import with structure preservation
 - Import history tracking
@@ -53,6 +65,7 @@ This plugin is under active development. Future features will include:
 - Background processing for large imports
 - Drag and drop selection
 - File preview capabilities
+- User account management
 
 ## Troubleshooting
 
@@ -72,6 +85,7 @@ If the plugin doesn't work:
 ## Credits
 
 - MEGA.nz for their cloud storage service
+- megajs library for MEGA API integration
 - Stash community for the plugin framework
 
 ## License
