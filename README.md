@@ -1,63 +1,47 @@
-# MEGA Import Plugin
+# MEGA Import Plugin for Stash
 
-## Status: [CURRENT]
-Last Updated: 2024-03-22
-Version: 1.0.0
+This plugin allows importing files from MEGA.nz directly into Stash.
 
-## Introduction
-A Stash plugin for importing files from MEGA.nz cloud storage directly into your Stash library.
+## Installation
 
-## Executive Summary
-The MEGA Import plugin provides a seamless interface for importing files from MEGA.nz cloud storage into your Stash library. It features a modern UI with file browsing, selection, and import capabilities.
+1. Copy the `mega_import` folder to your Stash plugins directory
+   - Typically located at `~/.stash/plugins/` on Linux/Mac
+   - Typically located at `C:\Users\USERNAME\.stash\plugins\` on Windows
+2. Restart Stash or reload plugins from the Settings > Plugins page
+3. The plugin should appear in the Tools menu
 
-## Key Points
-- Direct integration with MEGA.nz cloud storage
-- Modern UI with file browser interface
-- Secure authentication handling
-- Progress tracking for imports
-- Support for large file transfers
+## Usage
 
-## Main Sections
+1. Navigate to "Tools > MEGA Import" in the Stash UI
+2. Enter a MEGA.nz URL (file or folder link)
+3. Click "Import from MEGA"
+4. The files will be downloaded and imported into your Stash library
 
-### Features
-- Browse MEGA.nz files and folders
-- Select multiple files for import
-- Track import progress
-- Secure credential management
-- Modern UI integration
+## Requirements
 
-### Technical Details
-- Built using React for UI components
-- Uses MEGA.nz API for file operations
-- Integrates with Stash's plugin system
-- Requires CommunityScriptsUILibrary
+- Stash v0.15.0 or higher
 
-### Installation
-1. Place plugin in `plugins/community/mega_import/`
-2. Restart Stash server
-3. Enable plugin in Settings > Plugins
-4. Configure MEGA credentials in plugin settings
+## Development
 
-### Usage
-1. Click the MEGA Import button in the navigation
-2. Log in to your MEGA account
-3. Browse and select files
-4. Click Import to begin transfer
+This plugin is still in development. Current features:
+- Basic UI integration
+- MEGA.nz URL parsing
 
-## Cross-References
-- [Stash Plugin Documentation](https://github.com/stashapp/Stash/wiki/Plugins)
-- [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts)
+Planned features:
+- File download implementation
+- Import queue management
+- Progress reporting
+- Batch imports
+- Custom import paths
 
-## Feedback
-Please report issues and feature requests on the GitHub repository.
+## Troubleshooting
 
-## Review History
-- 2024-03-22: Initial release
-- 2024-03-22: Added UI integration
-- 2024-03-22: Updated plugin structure
+If the plugin doesn't appear in Stash:
+1. Check Stash logs for any errors
+2. Ensure the plugin folder is in the correct location
+3. Verify that all required files are present
+4. Make sure the plugin configuration (mega_import.yml) is valid
 
-## Changelog
-- v1.0.0 (2024-03-22)
-  - Initial release
-  - Basic file browsing and import functionality
-  - UI integration with navigation button 
+## License
+
+MIT 

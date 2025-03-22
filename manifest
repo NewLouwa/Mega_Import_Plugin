@@ -1,0 +1,12 @@
+id: mega_import
+name: MEGA Import
+metadata:
+  description: Import files from MEGA.nz directly into Stash
+version: 1.0.0
+date: "2024-03-22"
+requires: []
+files:
+- mega_import.yml
+- mega_import.js
+- mega_import.css
+- mega_import.py 
