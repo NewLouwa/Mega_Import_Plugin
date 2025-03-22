@@ -3,7 +3,7 @@
   const api = window.PluginApi;
   const React = api.React;
   const { Button, Modal, Form, Tabs, Tab } = api.libraries.Bootstrap;
-  const { faCloudDownloadAlt, faSpinner, faSignInAlt, faFolder, faFile } = api.libraries.FontAwesomeSolid;
+  const { faCloudDownloadAlt, faSpinner, faSignInAlt, faFolder, faFile, faArrowLeft, faHome } = api.libraries.FontAwesomeSolid;
   const { Icon } = api.components;
 
   // Define MEGA logo as inline SVG
@@ -11,6 +11,134 @@
 
   // Larger version for modal header
   const megaLogoSVGLarge = '<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="30" height="30" viewBox="0 0 361.4 361.4"><path fill="#d9272e" d="M180.7 0C80.9 0 0 80.9 0 180.7c0 99.8 80.9 180.7 180.7 180.7 99.8 0 180.7-80.9 180.7-180.7C361.4 80.9 280.5 0 180.7 0Zm93.8 244.6c0 3.1-2.5 5.6-5.6 5.6h-23.6c-3.1 0-5.6-2.5-5.6-5.6v-72.7c0-.6-.7-.9-1.2-.5l-50 50c-4.3 4.3-11.4 4.3-15.7 0l-50-50c-.4-.4-1.2-.1-1.2.5v72.7c0 3.1-2.5 5.6-5.6 5.6H92.4c-3.1 0-5.6-2.5-5.6-5.6V116.8c0-3.1 2.5-5.6 5.6-5.6h16.2c2.9 0 5.8 1.2 7.9 3.3l62.2 62.2c1.1 1.1 2.8 1.1 3.9 0l62.2-62.2c2.1-2.1 4.9-3.3 7.9-3.3h16.2c3.1 0 5.6 2.5 5.6 5.6v127.8z"/></svg>';
+
+  // Add MEGA API integration module
+  const MegaApiClient = {
+    storage: null,
+    
+    // Initialize the MEGA API client with credentials
+    login: async function(email, password, rememberMe) {
+      try {
+        // This would be replaced with actual MEGA API calls using megajs library
+        // For now, we're just simulating the login
+        
+        // Example of how it would work with the real API:
+        // const { Storage } = await import('megajs');
+        // this.storage = new Storage({ email, password });
+        // await this.storage.ready;
+        
+        // Simulate login delay
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        
+        // Return simulated user info
+        return {
+          success: true,
+          name: "MEGA User",
+          email: email,
+          spaceUsed: Math.floor(Math.random() * 1000000000),
+          spaceTotal: 50000000000
+        };
+      } catch (error) {
+        console.error("MEGA API login error:", error);
+        throw new Error(error.message || "Login failed");
+      }
+    },
+    
+    // Get files and folders at a specific path
+    listFiles: async function(path) {
+      try {
+        // This would be replaced with actual MEGA API calls
+        // For example:
+        // const folder = this.storage.root.navigate(path.split('/').filter(p => p));
+        // return folder.children.map(file => ({
+        //   id: file.nodeId,
+        //   name: file.name,
+        //   type: file.directory ? 'folder' : 'file',
+        //   size: file.size,
+        //   path: path + '/' + file.name
+        // }));
+        
+        // Simulate API delay
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Return simulated files based on the path
+        if (path === '/') {
+          return [
+            { id: '1', name: 'Documents', type: 'folder', path: '/Documents' },
+            { id: '2', name: 'Images', type: 'folder', path: '/Images' },
+            { id: '3', name: 'Videos', type: 'folder', path: '/Videos' },
+            { id: '4', name: 'file1.jpg', type: 'file', size: '1.5 MB', path: '/file1.jpg' },
+            { id: '5', name: 'file2.mp4', type: 'file', size: '15 MB', path: '/file2.mp4' },
+          ];
+        } else if (path === '/Documents') {
+          return [
+            { id: '10', name: 'Work', type: 'folder', path: '/Documents/Work' },
+            { id: '11', name: 'Personal', type: 'folder', path: '/Documents/Personal' },
+            { id: '12', name: 'document1.pdf', type: 'file', size: '2.2 MB', path: '/Documents/document1.pdf' },
+            { id: '13', name: 'document2.docx', type: 'file', size: '1.1 MB', path: '/Documents/document2.docx' },
+          ];
+        } else if (path === '/Images') {
+          return [
+            { id: '20', name: 'Vacation', type: 'folder', path: '/Images/Vacation' },
+            { id: '21', name: 'image1.jpg', type: 'file', size: '3.5 MB', path: '/Images/image1.jpg' },
+            { id: '22', name: 'image2.png', type: 'file', size: '2.7 MB', path: '/Images/image2.png' },
+          ];
+        } else if (path === '/Videos') {
+          return [
+            { id: '30', name: 'video1.mp4', type: 'file', size: '25 MB', path: '/Videos/video1.mp4' },
+            { id: '31', name: 'video2.mov', type: 'file', size: '40 MB', path: '/Videos/video2.mov' },
+          ];
+        }
+        
+        // Return empty array for unknown paths
+        return [];
+      } catch (error) {
+        console.error("MEGA API list files error:", error);
+        throw new Error(error.message || "Failed to list files");
+      }
+    },
+    
+    // Download files from MEGA
+    downloadFiles: async function(filePaths) {
+      try {
+        // This would be replaced with actual MEGA API calls
+        // For example with multiple files:
+        // const results = await Promise.all(filePaths.map(async (path) => {
+        //   const file = this.storage.root.navigate(path.split('/').filter(p => p));
+        //   const buffer = await file.downloadBuffer();
+        //   // Then handle the buffer for saving
+        //   return { name: path, status: 'Success' };
+        // }));
+        
+        // Simulate download delay
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Return simulated results
+        return {
+          success: true,
+          imported: filePaths.length,
+          items: filePaths.map(path => ({ name: path, status: 'Success' }))
+        };
+      } catch (error) {
+        console.error("MEGA API download error:", error);
+        throw new Error(error.message || "Download failed");
+      }
+    },
+    
+    // Logout from MEGA
+    logout: async function() {
+      try {
+        // This would be replaced with actual MEGA API calls
+        // For example: await this.storage.close();
+        
+        this.storage = null;
+        return { success: true };
+      } catch (error) {
+        console.error("MEGA API logout error:", error);
+        throw new Error(error.message || "Logout failed");
+      }
+    }
+  };
 
   // Define main component with loading states
   const MegaImportComponent = () => {
@@ -45,15 +173,8 @@
       
       setIsLoading(true);
       try {
-        // Simulation of login - replace with actual MEGA API call
-        // const result = await api.utils.StashService.runPluginTask(
-        //   "mega_import", 
-        //   "Login to MEGA", 
-        //   { email, password }
-        // );
-        
-        // Simulating successful login
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        // Use the MEGA API client
+        const result = await MegaApiClient.login(email, password, rememberMe);
         
         setIsLoggedIn(true);
         
@@ -63,14 +184,9 @@
         // Navigate to MEGA browser page
         api.utils.navigate('/mega-browser');
         
-        // Mock files - replace with actual MEGA API response
-        setFiles([
-          { id: '1', name: 'Documents', type: 'folder', path: '/Documents' },
-          { id: '2', name: 'Images', type: 'folder', path: '/Images' },
-          { id: '3', name: 'Videos', type: 'folder', path: '/Videos' },
-          { id: '4', name: 'file1.jpg', type: 'file', size: '1.5 MB', path: '/file1.jpg' },
-          { id: '5', name: 'file2.mp4', type: 'file', size: '15 MB', path: '/file2.mp4' },
-        ]);
+        // Get files using the API client
+        const filesList = await MegaApiClient.listFiles('/');
+        setFiles(filesList);
         
         toast.success("Logged in successfully");
       } catch (error) {
@@ -98,22 +214,10 @@
       
       setIsLoading(true);
       try {
-        // Simulation of import - replace with actual MEGA API call
-        // const result = await api.utils.StashService.runPluginTask(
-        //   "mega_import", 
-        //   "Import from MEGA", 
-        //   { items: selectedItems }
-        // );
+        // Use the MEGA API client
+        const results = await MegaApiClient.downloadFiles(selectedItems);
         
-        // Simulating import
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        setResults({
-          success: true,
-          imported: selectedItems.length,
-          items: selectedItems.map(item => ({ name: item, status: 'Success' }))
-        });
-        
+        setResults(results);
         toast.success(`${selectedItems.length} items imported successfully`);
       } catch (error) {
         console.error("Import failed:", error);
@@ -131,36 +235,19 @@
       }
     };
     
-    const navigateToFolder = (path) => {
+    const navigateToFolder = async (path) => {
       setCurrentPath(path);
-      // Here you would fetch the contents of the new path from MEGA API
-      // For now we're just simulating with static data
-      if (path === '/Documents') {
-        setFiles([
-          { id: '10', name: 'Work', type: 'folder', path: '/Documents/Work' },
-          { id: '11', name: 'Personal', type: 'folder', path: '/Documents/Personal' },
-          { id: '12', name: 'document1.pdf', type: 'file', size: '2.2 MB', path: '/Documents/document1.pdf' },
-          { id: '13', name: 'document2.docx', type: 'file', size: '1.1 MB', path: '/Documents/document2.docx' },
-        ]);
-      } else if (path === '/Images') {
-        setFiles([
-          { id: '20', name: 'Vacation', type: 'folder', path: '/Images/Vacation' },
-          { id: '21', name: 'image1.jpg', type: 'file', size: '3.5 MB', path: '/Images/image1.jpg' },
-          { id: '22', name: 'image2.png', type: 'file', size: '2.7 MB', path: '/Images/image2.png' },
-        ]);
-      } else if (path === '/Videos') {
-        setFiles([
-          { id: '30', name: 'video1.mp4', type: 'file', size: '25 MB', path: '/Videos/video1.mp4' },
-          { id: '31', name: 'video2.mov', type: 'file', size: '40 MB', path: '/Videos/video2.mov' },
-        ]);
-      } else if (path === '/') {
-        setFiles([
-          { id: '1', name: 'Documents', type: 'folder', path: '/Documents' },
-          { id: '2', name: 'Images', type: 'folder', path: '/Images' },
-          { id: '3', name: 'Videos', type: 'folder', path: '/Videos' },
-          { id: '4', name: 'file1.jpg', type: 'file', size: '1.5 MB', path: '/file1.jpg' },
-          { id: '5', name: 'file2.mp4', type: 'file', size: '15 MB', path: '/file2.mp4' },
-        ]);
+      setIsLoading(true);
+      
+      try {
+        // Get files using the API client
+        const filesList = await MegaApiClient.listFiles(path);
+        setFiles(filesList);
+      } catch (error) {
+        console.error("Failed to navigate to folder:", error);
+        toast.error("Failed to load folder contents: " + (error.message || "Unknown error"));
+      } finally {
+        setIsLoading(false);
       }
     };
     
@@ -469,6 +556,11 @@
     const [results, setResults] = React.useState(null);
     const toast = api.hooks.useToast();
     
+    // Navigate back to the main Stash interface
+    const navigateToStash = () => {
+      api.utils.navigate('/');
+    };
+    
     // Similar functions as in the modal component
     const toggleItemSelection = (item) => {
       if (selectedItems.includes(item.path)) {
@@ -568,6 +660,18 @@
         React.createElement(
           "div",
           { className: "mega-browser-actions" },
+          React.createElement(
+            Button,
+            { 
+              variant: "secondary", 
+              onClick: navigateToStash,
+              className: "mr-2"
+            },
+            [
+              React.createElement(Icon, { icon: faHome }),
+              " Back to Stash"
+            ]
+          ),
           React.createElement(
             Button,
             { 
