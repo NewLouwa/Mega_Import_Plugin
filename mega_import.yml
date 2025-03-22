@@ -3,14 +3,17 @@ description: Import files from MEGA.nz cloud storage
 version: 1.0.0
 url: https://github.com/stashapp/stash
 
-interface: js
+# Plugin execution configuration
+exec:
+  - node
+  - "{pluginDir}/mega_import.js"
+interface: raw
 
 # UI configuration
 ui:
   javascript:
-    - register.js
     - mega_import.jsx
-    - utils/format.js
+    - register.js
   css:
     - mega_import.css
   requires: []
@@ -45,12 +48,16 @@ settings:
     type: BOOLEAN
     default: true
 
+# Plugin hooks
+hooks:
+  - name: Import from MEGA
+    description: Import files from MEGA.nz cloud storage
+    triggeredBy:
+      - Scene.Create.Post
+
 # Plugin tasks
 tasks:
   - name: Import from MEGA
     description: Import files from MEGA.nz cloud storage
     defaultArgs:
-      paths: []
-    plugin:
-      id: mega_import
-      operation: import 
+      mode: import 
