@@ -6,6 +6,12 @@
   const { faCloudDownloadAlt, faSpinner } = api.libraries.FontAwesomeSolid;
   const { Icon } = api.components;
 
+  // Define MEGA logo as inline SVG
+  const megaLogoSVG = '<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="20" height="20" viewBox="0 0 361.4 361.4"><path fill="#d9272e" d="M180.7 0C80.9 0 0 80.9 0 180.7c0 99.8 80.9 180.7 180.7 180.7 99.8 0 180.7-80.9 180.7-180.7C361.4 80.9 280.5 0 180.7 0Zm93.8 244.6c0 3.1-2.5 5.6-5.6 5.6h-23.6c-3.1 0-5.6-2.5-5.6-5.6v-72.7c0-.6-.7-.9-1.2-.5l-50 50c-4.3 4.3-11.4 4.3-15.7 0l-50-50c-.4-.4-1.2-.1-1.2.5v72.7c0 3.1-2.5 5.6-5.6 5.6H92.4c-3.1 0-5.6-2.5-5.6-5.6V116.8c0-3.1 2.5-5.6 5.6-5.6h16.2c2.9 0 5.8 1.2 7.9 3.3l62.2 62.2c1.1 1.1 2.8 1.1 3.9 0l62.2-62.2c2.1-2.1 4.9-3.3 7.9-3.3h16.2c3.1 0 5.6 2.5 5.6 5.6v127.8z"/></svg>';
+
+  // Larger version for modal header
+  const megaLogoSVGLarge = '<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="30" height="30" viewBox="0 0 361.4 361.4"><path fill="#d9272e" d="M180.7 0C80.9 0 0 80.9 0 180.7c0 99.8 80.9 180.7 180.7 180.7 99.8 0 180.7-80.9 180.7-180.7C361.4 80.9 280.5 0 180.7 0Zm93.8 244.6c0 3.1-2.5 5.6-5.6 5.6h-23.6c-3.1 0-5.6-2.5-5.6-5.6v-72.7c0-.6-.7-.9-1.2-.5l-50 50c-4.3 4.3-11.4 4.3-15.7 0l-50-50c-.4-.4-1.2-.1-1.2.5v72.7c0 3.1-2.5 5.6-5.6 5.6H92.4c-3.1 0-5.6-2.5-5.6-5.6V116.8c0-3.1 2.5-5.6 5.6-5.6h16.2c2.9 0 5.8 1.2 7.9 3.3l62.2 62.2c1.1 1.1 2.8 1.1 3.9 0l62.2-62.2c2.1-2.1 4.9-3.3 7.9-3.3h16.2c3.1 0 5.6 2.5 5.6 5.6v127.8z"/></svg>';
+
   // Define main component with loading states
   const MegaImportComponent = () => {
     const [display, setDisplay] = React.useState(false);
@@ -68,17 +74,8 @@
           className: "nav-utility minimal",
           title: "MEGA Import",
           onClick: onClickHandler,
-        },
-        React.createElement(
-          "img",
-          {
-            src: api.utils.getPluginBaseURL() + "/assets/Mega_logo.svg",
-            alt: "MEGA",
-            className: "mega-logo",
-            width: "20",
-            height: "20"
-          }
-        )
+          dangerouslySetInnerHTML: { __html: megaLogoSVG }
+        }
       )
     );
   };
@@ -106,16 +103,10 @@
         React.createElement(
           "div",
           { className: "modal-title-with-logo" },
-          React.createElement(
-            "img",
-            {
-              src: api.utils.getPluginBaseURL() + "/assets/Mega_logo.svg",
-              alt: "MEGA",
-              className: "mega-logo-header",
-              width: "30",
-              height: "30"
-            }
-          ),
+          React.createElement("span", {
+            dangerouslySetInnerHTML: { __html: megaLogoSVGLarge },
+            className: "mega-logo-header"
+          }),
           React.createElement(Modal.Title, null, "MEGA.nz Import")
         )
       ),
