@@ -53,6 +53,42 @@ The plugin uses a modular architecture:
 - `MegaBrowserPage`: A dedicated page component for browsing MEGA files
 - Direct integration with the MEGA.nz API via the megajs library
 
+### MEGA API Integration Pattern
+
+The plugin implements a wrapper around the mega.js library through the `MegaApiClient` module:
+
+```javascript
+// MEGA API Integration Module
+const MegaApiClient = {
+  // Private property to store the mega.js instance
+  _megaInstance: null,
+  
+  // Initialize the client and authenticate
+  initialize: async function(email, password) {
+    try {
+      // Create a new instance with credentials
+      this._megaInstance = new Mega({ email, password });
+      
+      // Login to MEGA account
+      await this._megaInstance.login(email, password);
+      
+      // Return account info
+      return { 
+        success: true,
+        // Account details
+      };
+    } catch (error) {
+      console.error("MEGA API initialization error:", error);
+      throw new Error(error.message || "Failed to initialize MEGA client");
+    }
+  },
+  
+  // Other methods for file operations, downloads, etc.
+}
+```
+
+This pattern encapsulates all MEGA API interactions and provides a consistent interface for UI components.
+
 ## Development
 
 This plugin is under active development. Future features will include:
