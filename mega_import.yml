@@ -2,6 +2,7 @@
 name: MEGA Import
 description: Import files from MEGA.nz cloud storage
 version: 1.0.0
+url: https://github.com/NewLouwa/Mega_Import_Plugin
 
 # UI configuration
 ui:
@@ -9,6 +10,8 @@ ui:
     - mega_import.js
   css:
     - mega_import.css
+  assets:
+    /: .
   csp:
     connect-src:
       - 'https://*.mega.nz'
@@ -43,6 +46,7 @@ exec:
   - node
   - "{pluginDir}/mega_import.js"
 interface: raw
+errLog: debug
 
 # Plugin hooks
 hooks:
