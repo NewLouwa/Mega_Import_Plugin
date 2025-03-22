@@ -1,108 +1,63 @@
-# MEGA Import Plugin for Stash
+# MEGA Import Plugin
 
-A plugin for [Stash](https://github.com/stashapp/stash) that allows you to import files directly from MEGA.nz into your Stash library.
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
 
-## Features
+## Introduction
+A Stash plugin for importing files from MEGA.nz cloud storage directly into your Stash library.
 
-- Browse your MEGA.nz storage directly from Stash
+## Executive Summary
+The MEGA Import plugin provides a seamless interface for importing files from MEGA.nz cloud storage into your Stash library. It features a modern UI with file browsing, selection, and import capabilities.
+
+## Key Points
+- Direct integration with MEGA.nz cloud storage
+- Modern UI with file browser interface
+- Secure authentication handling
+- Progress tracking for imports
+- Support for large file transfers
+
+## Main Sections
+
+### Features
+- Browse MEGA.nz files and folders
 - Select multiple files for import
-- Support for all file types
-- Progress tracking during import
-- Automatic cleanup of temporary files
-- Secure authentication with MEGA.nz
+- Track import progress
+- Secure credential management
+- Modern UI integration
 
-## Installation
+### Technical Details
+- Built using React for UI components
+- Uses MEGA.nz API for file operations
+- Integrates with Stash's plugin system
+- Requires CommunityScriptsUILibrary
 
-### Adding Local Source Plugin
+### Installation
+1. Place plugin in `plugins/community/mega_import/`
+2. Restart Stash server
+3. Enable plugin in Settings > Plugins
+4. Configure MEGA credentials in plugin settings
 
-1. Download the latest release from the [releases page](https://github.com/NewLouwa/Mega_Import_Plugin/releases)
-2. Extract the files to your Stash plugins directory:
-   - Windows: `%APPDATA%\stash\plugins\mega_import`
-   - Linux/Mac: `~/.local/share/stash/plugins/mega_import`
-3. Add the plugin as a local source in Stash:
-   - Go to Settings -> Plugins
-   - Click "Add Local Source"
-   - Enter the following details:
-     - Name: MEGA Import
-     - URL: https://github.com/NewLouwa/Mega_Import_Plugin
-     - Path: `%APPDATA%\stash\plugins\mega_import` (Windows) or `~/.local/share/stash/plugins/mega_import` (Linux/Mac)
-4. Restart Stash
-5. Enable the plugin in Settings -> Plugins
-6. Configure your MEGA.nz credentials in the plugin settings
+### Usage
+1. Click the MEGA Import button in the navigation
+2. Log in to your MEGA account
+3. Browse and select files
+4. Click Import to begin transfer
 
-### Configuration
+## Cross-References
+- [Stash Plugin Documentation](https://github.com/stashapp/Stash/wiki/Plugins)
+- [CommunityScriptsUILibrary](https://github.com/stashapp/CommunityScripts)
 
-The plugin requires the following settings:
+## Feedback
+Please report issues and feature requests on the GitHub repository.
 
-- **MEGA Email**: Your MEGA.nz account email
-- **MEGA Password**: Your MEGA.nz account password
-- **Download Path**: Temporary directory for downloading files (default: system temp directory)
-- **Allowed Extensions**: Comma-separated list of file extensions to allow (default: all)
-- **Delete After Import**: Whether to delete files from MEGA after successful import (default: false)
+## Review History
+- 2024-03-22: Initial release
+- 2024-03-22: Added UI integration
+- 2024-03-22: Updated plugin structure
 
-## Usage
-
-1. Go to the Tasks page in Stash
-2. Click the "Import from MEGA" button
-3. Browse your MEGA.nz storage
-4. Select the files you want to import
-5. Click "Import Selected" to start the import process
-
-## Development
-
-### Prerequisites
-
-- Node.js 16 or later
-- Yarn package manager
-- Git
-
-### Setup
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/NewLouwa/Mega_Import_Plugin.git
-   cd Mega_Import_Plugin
-   ```
-
-2. Install dependencies:
-   ```bash
-   yarn install
-   ```
-
-3. Build the plugin:
-   ```bash
-   yarn build
-   ```
-
-4. Copy the built files to your Stash plugins directory
-
-### Project Structure
-
-```
-mega_import/
-├── src/
-│   ├── index.tsx        # Main plugin entry point
-│   ├── components/      # React components
-│   └── utils/          # Utility functions
-├── assets/             # Static assets (images, etc.)
-├── mega_import.yml     # Plugin configuration
-├── mega_import.css     # Plugin styles
-└── package.json        # Dependencies and scripts
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- [Stash](https://github.com/stashapp/stash) - The main application
-- [MEGA.nz](https://mega.nz) - The cloud storage service 
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Initial release
+  - Basic file browsing and import functionality
+  - UI integration with navigation button 

@@ -151,4 +151,59 @@ module.exports = {
     main,
     handleFileSelect,
     handleNavigate
-}; 
+};
+
+(function () {
+    const { React } = PluginApi.libraries;
+    const { Form, Button } = PluginApi.components;
+    
+    window.MegaImport = () => {
+        const [url, setUrl] = React.useState("");
+        const [isLoading, setIsLoading] = React.useState(false);
+        const { Toast } = PluginApi.hooks.useToast();
+
+        const handleImport = async () => {
+            if (!url) {
+                Toast.error("Please enter a MEGA.nz URL");
+                return;
+            }
+
+            setIsLoading(true);
+            try {
+                // Call our task
+                const result = await PluginApi.utils.StashService.runPluginTask("mega_import", "Import from MEGA", { url });
+                
+                if (result.output === "ok") {
+                    Toast.success("Successfully imported files from MEGA");
+                } else {
+                    Toast.error("Failed to import: " + result.output);
+                }
+            } catch (error) {
+                Toast.error("Error during import: " + error.message);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        return React.createElement("div", { className: "mega-import-container" }, [
+            React.createElement("h2", { key: "title" }, "Import from MEGA.nz"),
+            React.createElement(Form.Group, { key: "form" }, [
+                React.createElement(Form.Label, { key: "label" }, "MEGA.nz URL"),
+                React.createElement(Form.Control, {
+                    key: "input",
+                    type: "text",
+                    placeholder: "https://mega.nz/...",
+                    value: url,
+                    onChange: (e) => setUrl(e.target.value),
+                    disabled: isLoading
+                }),
+                React.createElement(Button, {
+                    key: "button",
+                    variant: "primary",
+                    onClick: handleImport,
+                    disabled: isLoading || !url
+                }, isLoading ? "Importing..." : "Import")
+            ])
+        ]);
+    };
+})(); 
