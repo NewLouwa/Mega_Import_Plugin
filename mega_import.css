@@ -98,4 +98,199 @@
   word-break: break-word;
   max-height: 300px;
   overflow-y: auto;
+}
+
+/* MEGA Import Plugin Styles */
+
+/* Modal Styles */
+.modal-title-with-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mega-logo-header {
+  width: 30px;
+  height: 30px;
+}
+
+/* Form Styles */
+.form-group {
+  margin-bottom: 15px;
+}
+
+.form-group label {
+  font-weight: 500;
+  margin-bottom: 5px;
+  display: block;
+}
+
+/* Login Tab Styles */
+.account-info {
+  padding: 15px;
+  background-color: #f8f9fa;
+  border-radius: 5px;
+  margin-bottom: 15px;
+}
+
+.account-info h4 {
+  margin-bottom: 15px;
+  color: #333;
+}
+
+/* File Browser Styles */
+.file-browser {
+  height: 400px;
+  display: flex;
+  flex-direction: column;
+}
+
+.path-navigation {
+  padding: 8px;
+  background-color: #f8f9fa;
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+
+.files-container {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  padding: 8px;
+  background-color: #fff;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-bottom: 4px;
+  transition: background-color 0.2s;
+}
+
+.file-item:hover {
+  background-color: #f1f1f1;
+}
+
+.file-item.selected {
+  background-color: #e3f2fd;
+}
+
+.file-item svg {
+  margin-right: 10px;
+  color: #666;
+}
+
+.file-item svg[data-icon="folder"] {
+  color: #ffc107;
+}
+
+.file-item svg[data-icon="file"] {
+  color: #6c757d;
+}
+
+.file-name {
+  flex: 1;
+  font-size: 14px;
+}
+
+.file-size {
+  font-size: 12px;
+  color: #6c757d;
+  margin-right: 15px;
+}
+
+.selection-info {
+  padding: 8px;
+  background-color: #e3f2fd;
+  border-radius: 4px;
+  font-size: 14px;
+  color: #0d6efd;
+}
+
+/* Results Tab Styles */
+.import-results {
+  padding: 15px;
+}
+
+.result-summary {
+  background-color: #d4edda;
+  color: #155724;
+  padding: 10px;
+  border-radius: 4px;
+}
+
+.result-details {
+  margin-top: 15px;
+  background-color: #f8f9fa;
+  padding: 10px;
+  border-radius: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.result-details pre {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* Loader Styles */
+.loader {
+  text-align: center;
+  padding: 20px;
+}
+
+.progress {
+  height: 5px;
+  margin-top: 10px;
+}
+
+.progress-bar {
+  width: 100%;
+  background-color: #d9272e; /* MEGA red color */
+}
+
+/* MEGA Brand Colors */
+.btn-primary {
+  background-color: #d9272e; /* MEGA red color */
+  border-color: #d9272e;
+}
+
+.btn-primary:hover {
+  background-color: #c01f25;
+  border-color: #c01f25;
+}
+
+.btn-primary:disabled {
+  background-color: #e68a8f;
+  border-color: #e68a8f;
+}
+
+/* Tab Styles */
+.nav-tabs .nav-link.active {
+  font-weight: 500;
+  color: #d9272e;
+  border-color: #dee2e6 #dee2e6 #fff;
+}
+
+.nav-tabs .nav-link:not(.active) {
+  color: #495057;
+}
+
+.nav-tabs .nav-link.disabled {
+  color: #adb5bd;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .file-browser {
+    height: 300px;
+  }
+  
+  .modal-dialog {
+    margin: 0.5rem;
+  }
 } 
