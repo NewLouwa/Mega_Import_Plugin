@@ -16,19 +16,20 @@ For Stash 0.15.0 and higher:
 
 1. Click the MEGA Import button in the top navigation bar (shows the MEGA logo)
 2. Log in with your MEGA.nz account credentials
-3. Browse your MEGA cloud storage and select files to import
-4. Click "Import Selected" to download the selected files to your Stash library
+3. After successful login, you'll be redirected to the MEGA Cloud Browser page
+4. Browse your MEGA cloud storage and select files to import
+5. Click "Import Selected" to download the selected files to your Stash library
 
 ### Features
 
 - Direct login to your MEGA account
-- Browse your entire MEGA cloud storage
-- Navigate through folders
+- Dedicated browser page for MEGA cloud storage
+- Navigate through folders with intuitive interface
 - Select multiple files for import
 - Visual file selection with checkboxes
 - Clear path navigation
-- Tabbed interface for organization
-- Account management within the plugin
+- Full-screen browsing experience
+- Account management integrated with the plugin
 
 ## Requirements
 
@@ -62,7 +63,6 @@ If the plugin doesn't work:
    - `mega_import.py`
    - `mega_import.css`
    - `info.json`
-   - `assets/` directory with MEGA logo
 
 2. Ensure Python is installed and available in your PATH
 3. Check Stash logs for any errors

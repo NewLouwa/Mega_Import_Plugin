@@ -56,7 +56,12 @@
         await new Promise(resolve => setTimeout(resolve, 1500));
         
         setIsLoggedIn(true);
-        setActiveTab('browser');
+        
+        // Instead of just changing the tab, close the modal and navigate to MEGA browser page
+        disableModal();
+        
+        // Navigate to MEGA browser page
+        api.utils.navigate('/mega-browser');
         
         // Mock files - replace with actual MEGA API response
         setFiles([
@@ -454,6 +459,207 @@
       )
     );
   };
+
+  // Create a dedicated page component for MEGA browser
+  const MegaBrowserPage = () => {
+    const [files, setFiles] = React.useState([]);
+    const [currentPath, setCurrentPath] = React.useState('/');
+    const [selectedItems, setSelectedItems] = React.useState([]);
+    const [isLoading, setIsLoading] = React.useState(false);
+    const [results, setResults] = React.useState(null);
+    const toast = api.hooks.useToast();
+    
+    // Similar functions as in the modal component
+    const toggleItemSelection = (item) => {
+      if (selectedItems.includes(item.path)) {
+        setSelectedItems(selectedItems.filter(i => i !== item.path));
+      } else {
+        setSelectedItems([...selectedItems, item.path]);
+      }
+    };
+    
+    const navigateToFolder = (path) => {
+      setCurrentPath(path);
+      // Here you would fetch the contents of the new path from MEGA API
+      // For now we're just simulating with static data
+      if (path === '/Documents') {
+        setFiles([
+          { id: '10', name: 'Work', type: 'folder', path: '/Documents/Work' },
+          { id: '11', name: 'Personal', type: 'folder', path: '/Documents/Personal' },
+          { id: '12', name: 'document1.pdf', type: 'file', size: '2.2 MB', path: '/Documents/document1.pdf' },
+          { id: '13', name: 'document2.docx', type: 'file', size: '1.1 MB', path: '/Documents/document2.docx' },
+        ]);
+      } else if (path === '/Images') {
+        setFiles([
+          { id: '20', name: 'Vacation', type: 'folder', path: '/Images/Vacation' },
+          { id: '21', name: 'image1.jpg', type: 'file', size: '3.5 MB', path: '/Images/image1.jpg' },
+          { id: '22', name: 'image2.png', type: 'file', size: '2.7 MB', path: '/Images/image2.png' },
+        ]);
+      } else if (path === '/Videos') {
+        setFiles([
+          { id: '30', name: 'video1.mp4', type: 'file', size: '25 MB', path: '/Videos/video1.mp4' },
+          { id: '31', name: 'video2.mov', type: 'file', size: '40 MB', path: '/Videos/video2.mov' },
+        ]);
+      } else if (path === '/') {
+        setFiles([
+          { id: '1', name: 'Documents', type: 'folder', path: '/Documents' },
+          { id: '2', name: 'Images', type: 'folder', path: '/Images' },
+          { id: '3', name: 'Videos', type: 'folder', path: '/Videos' },
+          { id: '4', name: 'file1.jpg', type: 'file', size: '1.5 MB', path: '/file1.jpg' },
+          { id: '5', name: 'file2.mp4', type: 'file', size: '15 MB', path: '/file2.mp4' },
+        ]);
+      }
+    };
+    
+    const handleImport = async () => {
+      if (selectedItems.length === 0) {
+        toast.error("Please select files or folders to import");
+        return;
+      }
+      
+      setIsLoading(true);
+      try {
+        // Simulation of import - replace with actual MEGA API call
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        setResults({
+          success: true,
+          imported: selectedItems.length,
+          items: selectedItems.map(item => ({ name: item, status: 'Success' }))
+        });
+        
+        toast.success(`${selectedItems.length} items imported successfully`);
+      } catch (error) {
+        console.error("Import failed:", error);
+        toast.error("Import failed: " + (error.message || "Unknown error"));
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    // Load initial files when component mounts
+    React.useEffect(() => {
+      // This would typically be a call to the MEGA API
+      // For now, we're using static mock data
+      setFiles([
+        { id: '1', name: 'Documents', type: 'folder', path: '/Documents' },
+        { id: '2', name: 'Images', type: 'folder', path: '/Images' },
+        { id: '3', name: 'Videos', type: 'folder', path: '/Videos' },
+        { id: '4', name: 'file1.jpg', type: 'file', size: '1.5 MB', path: '/file1.jpg' },
+        { id: '5', name: 'file2.mp4', type: 'file', size: '15 MB', path: '/file2.mp4' },
+      ]);
+    }, []);
+    
+    return React.createElement(
+      "div",
+      { className: "mega-browser-page" },
+      React.createElement(
+        "div",
+        { className: "mega-browser-header" },
+        React.createElement(
+          "div",
+          { className: "title-with-logo" },
+          React.createElement("span", {
+            dangerouslySetInnerHTML: { __html: megaLogoSVGLarge },
+            className: "mega-logo-header"
+          }),
+          React.createElement("h2", null, "MEGA Cloud Browser")
+        ),
+        React.createElement(
+          "div",
+          { className: "mega-browser-actions" },
+          React.createElement(
+            Button,
+            { 
+              variant: "primary", 
+              onClick: handleImport,
+              disabled: isLoading || selectedItems.length === 0,
+              className: "mr-2"
+            },
+            isLoading ? [
+              React.createElement(Icon, { icon: faSpinner, spin: true }),
+              " Importing..."
+            ] : [
+              React.createElement(Icon, { icon: faCloudDownloadAlt }),
+              " Import Selected"
+            ]
+          )
+        )
+      ),
+      React.createElement(
+        "div",
+        { className: "path-navigation mb-3" },
+        React.createElement("strong", null, "Current path: "),
+        React.createElement("span", null, currentPath)
+      ),
+      React.createElement(
+        "div",
+        { className: "mega-browser-content" },
+        React.createElement(
+          "div",
+          { className: "files-container" },
+          currentPath !== '/' && React.createElement(
+            "div",
+            { 
+              className: "file-item", 
+              onClick: () => navigateToFolder(currentPath.substring(0, currentPath.lastIndexOf('/')) || '/')
+            },
+            React.createElement(Icon, { icon: faFolder }),
+            React.createElement("span", null, "..")
+          ),
+          files.map(file => React.createElement(
+            "div",
+            { 
+              key: file.id,
+              className: `file-item ${selectedItems.includes(file.path) ? 'selected' : ''}`,
+              onClick: () => file.type === 'folder' ? navigateToFolder(file.path) : toggleItemSelection(file)
+            },
+            React.createElement(Icon, { icon: file.type === 'folder' ? faFolder : faFile }),
+            React.createElement("span", { className: "file-name" }, file.name),
+            file.type === 'file' && React.createElement("span", { className: "file-size" }, file.size),
+            file.type === 'file' && React.createElement(
+              Form.Check,
+              {
+                type: "checkbox",
+                checked: selectedItems.includes(file.path),
+                onChange: (e) => {
+                  e.stopPropagation();
+                  toggleItemSelection(file);
+                },
+                onClick: (e) => e.stopPropagation()
+              }
+            )
+          ))
+        ),
+        selectedItems.length > 0 && React.createElement(
+          "div",
+          { className: "selection-info mt-3" },
+          React.createElement("span", null, `${selectedItems.length} items selected`)
+        ),
+        results && React.createElement(
+          "div",
+          { className: "import-results mt-4" },
+          React.createElement("h4", null, "Import Results"),
+          React.createElement(
+            "div",
+            { className: "result-summary mb-2" },
+            React.createElement("p", null, `Successfully imported ${results.imported} items.`)
+          ),
+          React.createElement(
+            "div",
+            { className: "result-details" },
+            React.createElement("pre", null, JSON.stringify(results.items, null, 2))
+          )
+        )
+      )
+    );
+  };
+
+  // Register route for the MEGA browser page
+  api.register.route({
+    path: '/mega-browser',
+    component: MegaBrowserPage
+  });
 
   // Add to navbar using patch.before
   api.patch.before("MainNavBar.UtilityItems", function (props) {

@@ -138,6 +138,45 @@
   color: #333;
 }
 
+/* MEGA Browser Page Styles */
+.mega-browser-page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.mega-browser-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #dee2e6;
+}
+
+.title-with-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.title-with-logo h2 {
+  margin: 0;
+  font-size: 24px;
+  color: #333;
+}
+
+.mega-browser-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.mega-browser-content {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 200px);
+}
+
 /* File Browser Styles */
 .file-browser {
   height: 400px;
@@ -159,6 +198,7 @@
   border-radius: 4px;
   padding: 8px;
   background-color: #fff;
+  min-height: 400px;
 }
 
 .file-item {
@@ -292,5 +332,17 @@
   
   .modal-dialog {
     margin: 0.5rem;
+  }
+  
+  .mega-browser-page {
+    padding: 10px;
+  }
+  
+  .mega-browser-content {
+    height: calc(100vh - 150px);
+  }
+  
+  .title-with-logo h2 {
+    font-size: 20px;
   }
 } 
