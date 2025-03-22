@@ -44,6 +44,23 @@
   word-break: break-word;
 }
 
+/* MEGA Logo styles */
+.mega-logo {
+  width: 20px;
+  height: 20px;
+}
+
+.modal-title-with-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mega-logo-header {
+  width: 30px;
+  height: 30px;
+}
+
 /* Modal specific styles */
 .modal-body .form-group {
   margin-bottom: 20px;

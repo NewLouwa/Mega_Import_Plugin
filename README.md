@@ -9,11 +9,11 @@ This plugin allows importing files from MEGA.nz directly into Stash.
    - Typically located at `C:\Users\USERNAME\.stash\plugins\` on Windows
    - Or place in your `.local/plugins/` directory if using a customized setup
 2. Restart Stash or reload plugins from the Settings > Plugins page
-3. The plugin will add a MEGA Import button to the top navigation bar
+3. The plugin will add a MEGA Import button with the MEGA logo to the top navigation bar
 
 ## Usage
 
-1. Click the MEGA Import button in the top navigation bar
+1. Click the MEGA logo button in the top navigation bar
 2. Enter a MEGA.nz URL (file or folder link)
 3. Click "Import from MEGA"
 4. The files will be downloaded and imported into your Stash library
@@ -27,9 +27,10 @@ This plugin allows importing files from MEGA.nz directly into Stash.
 ## Development
 
 This plugin is still in development. Current features:
-- UI integration with navbar button
+- UI integration with navbar button using MEGA logo
 - MEGA.nz URL parsing
 - Plugin API integration
+- Modal-based user interface
 
 Planned features:
 - Full MEGA.nz API integration
