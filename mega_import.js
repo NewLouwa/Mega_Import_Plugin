@@ -59,7 +59,6 @@
 
   // NavBar Button Component
   const NavButton = ({ onClickHandler }) => {
-    const { Icon } = api.components;
     return React.createElement(
       React.Fragment,
       null,
@@ -70,7 +69,16 @@
           title: "MEGA Import",
           onClick: onClickHandler,
         },
-        React.createElement(Icon, { icon: faCloudDownloadAlt })
+        React.createElement(
+          "img",
+          {
+            src: api.utils.getPluginBaseURL() + "/assets/Mega_logo.svg",
+            alt: "MEGA",
+            className: "mega-logo",
+            width: "20",
+            height: "20"
+          }
+        )
       )
     );
   };
@@ -95,7 +103,21 @@
       React.createElement(
         Modal.Header,
         { closeButton: true },
-        React.createElement(Modal.Title, null, "MEGA.nz Import")
+        React.createElement(
+          "div",
+          { className: "modal-title-with-logo" },
+          React.createElement(
+            "img",
+            {
+              src: api.utils.getPluginBaseURL() + "/assets/Mega_logo.svg",
+              alt: "MEGA",
+              className: "mega-logo-header",
+              width: "30",
+              height: "30"
+            }
+          ),
+          React.createElement(Modal.Title, null, "MEGA.nz Import")
+        )
       ),
       React.createElement(
         Modal.Body,
