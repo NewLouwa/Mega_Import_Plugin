@@ -1,0 +1,167 @@
+/**
+ * @description Debug mode rules for MEGA Import plugin troubleshooting
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when debugging the MEGA Import plugin"
+ * }
+ */
+
+# Debug Mode Rules
+
+## Status: [CURRENT]
+Last Updated: 2024-11-14
+Version: 1.1.0
+
+## Introduction
+Debug mode specific rules for troubleshooting and resolving issues in the MEGA Import plugin.
+
+## Executive Summary
+These rules provide structured approaches for identifying, analyzing, and resolving issues in the MEGA Import plugin, with focus on external RPC plugin debugging.
+
+## Key Points
+- Issue identification
+- Debugging strategies
+- RPC communication troubleshooting
+- Root cause analysis
+- Resolution verification
+
+## Common Issues
+
+### Plugin Visibility
+- **Symptoms**: Plugin not appearing in navigation or UI
+- **Potential Causes**:
+  - Incorrect plugin location
+  - Missing UI registration
+  - Invalid YAML configuration
+  - Plugin process errors
+  - Interface mismatch
+- **Debugging Steps**:
+  1. Verify plugin location in community plugins directory
+  2. Check YAML configuration against working plugins
+  3. Verify interface setting in configuration
+  4. Check Stash logs for plugin loading errors
+  5. Validate register.js for proper PluginAPI usage
+
+### RPC Communication
+- **Symptoms**: Plugin fails to communicate with Stash
+- **Potential Causes**:
+  - Incorrect RPC implementation
+  - Interface mismatch in configuration
+  - Plugin process crashes
+  - Missing error handling
+- **Debugging Steps**:
+  1. Check Stash logs for RPC communication errors
+  2. Verify plugin process is running
+  3. Add debug logging to plugin's Execute method
+  4. Validate JSON serialization/deserialization
+  5. Check error handling in RPC implementation
+
+### API Integration
+- **Symptoms**: Failed API requests, errors in console
+- **Potential Causes**:
+  - Missing CSP configuration
+  - Incorrect API endpoints
+  - Authentication issues
+  - Network errors
+  - MEGA.nz API changes
+- **Debugging Steps**:
+  1. Verify CSP settings in YAML configuration
+  2. Check browser console for CORS errors
+  3. Validate API request format
+  4. Test authentication flow
+  5. Verify MEGA.nz API hasn't changed
+
+### UI Rendering
+- **Symptoms**: UI components not rendering correctly
+- **Potential Causes**:
+  - Missing CSS files
+  - JavaScript errors
+  - React component issues
+  - DOM manipulation errors
+  - PluginAPI version mismatch
+- **Debugging Steps**:
+  1. Check browser console for JavaScript errors
+  2. Verify CSS file inclusion
+  3. Test component rendering in isolation
+  4. Check for conflicting styles
+  5. Ensure PluginAPI usage is correct
+
+### Plugin Process
+- **Symptoms**: Plugin process crashes or fails to start
+- **Potential Causes**:
+  - Build errors
+  - Missing dependencies
+  - Runtime exceptions
+  - Resource issues
+- **Debugging Steps**:
+  1. Check Stash logs for process start errors
+  2. Run plugin binary directly for error messages
+  3. Add detailed logging to plugin startup
+  4. Check system resources (memory, file handles)
+  5. Validate all dependencies are available
+
+## Debugging Strategies
+
+### Console Logging
+- Use structured console logging with levels
+- Include relevant context in logs
+- Log at decision points
+- Group related logs together
+- Clear logs when starting new debugging session
+
+### RPC Debugging
+- Add debug logging to RPC methods
+- Log input and output JSON
+- Implement request/response tracing
+- Add timing information for performance issues
+- Set up error trapping for RPC calls
+
+### Process Monitoring
+- Check plugin process is running
+- Monitor memory usage of plugin process
+- Log startup sequence with timestamps
+- Capture process exit codes and signals
+- Validate proper shutdown procedures
+
+### Error Handling
+- Implement try/catch blocks
+- Log detailed error information
+- Provide user-friendly error messages
+- Handle specific error types differently
+- Implement global error handling
+
+### Performance Debugging
+- Profile critical functions
+- Monitor memory usage
+- Check for unnecessary re-renders
+- Identify bottlenecks
+- Test with large datasets
+
+## Resolution Verification
+- Create reproducible test cases
+- Verify fix addresses root cause
+- Check for regressions
+- Document solution
+- Update memory bank with findings
+
+## Cross-References
+- [stashPlugins.mdc](../domain/stashPlugins.mdc)
+- [decisions.mdc](../patterns/decisions.mdc)
+- [troubleshooting.mdc](../patterns/troubleshooting.mdc)
+
+## Review History
+- 2024-03-22: Initial debug mode rules creation
+- 2024-11-14: Updated with RPC plugin debugging strategies
+
+## Changelog
+- v1.1.0 (2024-11-14)
+  - Added RPC communication troubleshooting
+  - Added plugin process debugging
+  - Updated plugin visibility troubleshooting
+  - Added interface mismatch checks
+  
+- v1.0.0 (2024-03-22)
+  - Created debug mode rules
+  - Documented common issues
+  - Added debugging strategies
+  - Specified resolution verification steps 

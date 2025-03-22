@@ -1,0 +1,123 @@
+/**
+ * @description Communication registry for the MEGA Import plugin
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when tracking communication about the MEGA Import plugin"
+ * }
+ */
+
+# Communication Registry
+
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
+
+## Introduction
+Records all documentation update communications for the MEGA Import plugin project.
+
+## Executive Summary
+Maintains a registry of which stakeholders were notified about which changes, documenting communication methods used.
+
+## Key Points
+- Communication tracking
+- Stakeholder notification
+- Documentation updates
+- Communication templates
+
+## Communication Log
+
+### 2024-03-22: Initial Documentation Setup
+- **Communication ID**: COMM-20240322-1
+- **Type**: Initial Setup
+- **Stakeholders Notified**: Development Team
+- **Method**: GitHub Documentation
+- **Content**: Creation of memory bank documentation structure
+- **Response**: Acknowledged
+- **Follow-up Required**: No
+- **Status**: Complete
+
+### 2024-03-22: Plugin Integration Update
+- **Communication ID**: COMM-20240322-2
+- **Type**: Implementation Update
+- **Stakeholders Notified**: Development Team
+- **Method**: GitHub Documentation
+- **Content**: Plugin moved to community plugins directory for better integration
+- **Response**: Acknowledged
+- **Follow-up Required**: Yes - Verify plugin visibility
+- **Status**: Pending
+
+### 2024-03-22: Technical Debt Identification
+- **Communication ID**: COMM-20240322-3
+- **Type**: Technical Update
+- **Stakeholders Notified**: Development Team
+- **Method**: GitHub Documentation
+- **Content**: Documented known technical debt and prioritization
+- **Response**: Pending
+- **Follow-up Required**: Yes - Review priorities
+- **Status**: Pending
+
+## Stakeholder Registry
+- Development Team: Primary plugin developers
+- Project Maintainers: Repository maintainers
+- End Users: Plugin users
+- Community Contributors: Potential contributors
+
+## Communication Methods
+- GitHub Documentation: Primary documentation method
+- Issue Tracking: Bug and feature request tracking
+- Pull Requests: Code review and discussion
+- Release Notes: User-facing updates
+
+## Communication Templates
+
+### Feature Update Template
+```
+Subject: [MEGA Import] Feature Update: {Feature Name}
+
+Dear {Stakeholder Group},
+
+We've updated the MEGA Import plugin with a new feature:
+
+Feature: {Feature Name}
+Description: {Brief Description}
+Implementation: {Key Implementation Details}
+Documentation: {Link to Documentation}
+
+Please review and provide feedback.
+
+Regards,
+MEGA Import Team
+```
+
+### Technical Update Template
+```
+Subject: [MEGA Import] Technical Update: {Update Type}
+
+Dear Development Team,
+
+We've made technical changes to the MEGA Import plugin:
+
+Update: {Update Type}
+Description: {Technical Description}
+Impact: {Areas Affected}
+Documentation: {Link to Documentation}
+
+Please review and acknowledge.
+
+Regards,
+MEGA Import Team
+```
+
+## Cross-References
+- [changelog.md](changelog.md)
+- [activeContext.md](activeContext.md)
+
+## Review History
+- 2024-03-22: Initial communication registry creation
+
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Created communication registry
+  - Added initial communication log
+  - Added stakeholder registry
+  - Added communication templates 

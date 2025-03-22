@@ -1,0 +1,61 @@
+/**
+ * @description Product context for the MEGA Import plugin
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when understanding the product context of the MEGA Import plugin"
+ * }
+ */
+
+# Product Context
+
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
+
+## Introduction
+The MEGA Import plugin solves the problem of importing files from MEGA.nz cloud storage into Stash by providing a seamless, integrated solution.
+
+## Executive Summary
+This plugin bridges the gap between MEGA.nz cloud storage and Stash, enabling users to import their files directly without manual downloading and uploading.
+
+## Key Points
+- Solves file import workflow
+- Integrates cloud storage
+- Provides user-friendly interface
+- Maintains security standards
+
+## Problem Statement
+Users need to:
+1. Download files from MEGA.nz
+2. Manually import into Stash
+3. Clean up temporary files
+4. Manage multiple transfers
+
+## Solution
+The plugin provides:
+1. Direct MEGA.nz integration
+2. One-click file selection
+3. Automatic import process
+4. Progress tracking
+5. Clean file management
+
+## User Experience Goals
+- Simple file browsing
+- Easy file selection
+- Clear progress indication
+- Reliable operation
+- Secure handling
+
+## Cross-References
+- [projectbrief.md](projectbrief.md)
+- [activeContext.md](activeContext.md)
+
+## Review History
+- 2024-03-22: Initial product context
+
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Initial product context
+  - Defined problem statement
+  - Described solution
+  - Set user experience goals 

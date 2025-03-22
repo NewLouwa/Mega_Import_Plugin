@@ -1,0 +1,80 @@
+/**
+ * @description Code documentation mapping for MEGA Import plugin
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when working with code documentation for the MEGA Import plugin"
+ * }
+ */
+
+# Code Documentation Map
+
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
+
+## Introduction
+This document maps code files to relevant documentation sections, helping maintain documentation when code changes.
+
+## Executive Summary
+A reference guide connecting code files to their documentation, ensuring documentation remains synchronized with code changes.
+
+## Key Points
+- Code-to-documentation mapping
+- Documentation maintenance
+- Change tracking
+- Gap identification
+
+## File Mappings
+
+### Plugin Configuration
+- `plugins/community/mega_import/mega_import.yml`
+  - [Project Brief](projectbrief.md) - Core requirements
+  - [Technical Context](techContext.md) - Configuration details
+  - [System Patterns](systemPatterns.md) - Plugin integration
+
+### UI Components
+- `plugins/community/mega_import/mega_import.js`
+  - [Technical Context](techContext.md) - Implementation details
+  - [System Patterns](systemPatterns.md) - UI architecture
+  - [Technical Debt](techDebt.md) - UI improvements
+
+- `plugins/community/mega_import/register.js`
+  - [System Patterns](systemPatterns.md) - Navigation integration
+  - [Technical Debt](techDebt.md) - Plugin visibility issues
+  - [Decisions](decisions.md) - UI framework choice
+
+### Styling
+- `plugins/community/mega_import/mega_import.css`
+  - [Technical Context](techContext.md) - UI implementation
+  - [System Patterns](systemPatterns.md) - UI design
+
+### Documentation
+- `plugins/community/mega_import/README.md`
+  - [Product Context](productContext.md) - User experience
+  - [Progress](progress.md) - Feature implementation
+
+## Documentation Gaps
+- Detailed API integration documentation
+- UI component architecture documentation
+- Performance optimization guidelines
+- Testing documentation
+
+## Update History
+- 2024-03-22: Initial code-to-documentation mapping
+- 2024-03-22: Identified documentation gaps
+- 2024-03-22: Added file mappings
+
+## Cross-References
+- [techContext.md](techContext.md)
+- [systemPatterns.md](systemPatterns.md)
+- [techDebt.md](techDebt.md)
+
+## Review History
+- 2024-03-22: Initial code documentation map creation
+
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Created code documentation map
+  - Added file mappings
+  - Identified documentation gaps
+  - Set up update history 

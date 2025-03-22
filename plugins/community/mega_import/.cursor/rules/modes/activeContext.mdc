@@ -1,0 +1,78 @@
+/**
+ * @description Active context for the MEGA Import plugin development
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when tracking current development focus for the MEGA Import plugin"
+ * }
+ */
+
+# Active Context
+
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
+
+## Introduction
+Current focus is on fixing plugin visibility and UI integration issues in the MEGA Import plugin.
+
+## Executive Summary
+The plugin is in active development with core functionality implemented. Current work focuses on UI integration and plugin visibility in the Stash interface.
+
+## Key Points
+- Core functionality complete
+- UI integration in progress
+- Plugin visibility issues
+- Navigation button pending
+
+## Current Work Focus
+1. Plugin Visibility
+   - Fix navigation integration
+   - Ensure proper plugin loading
+   - Verify community plugin structure
+
+2. UI Integration
+   - Complete navigation button
+   - Implement proper routing
+   - Add error handling
+
+3. Documentation
+   - Update memory bank
+   - Create user guides
+   - Document technical details
+
+## Recent Changes
+- Moved plugin to community directory
+- Updated YAML configuration
+- Added UI library dependency
+- Created memory bank structure
+
+## Next Steps
+1. Fix plugin visibility
+2. Complete UI integration
+3. Add error handling
+4. Optimize performance
+5. Add testing
+6. Update documentation
+
+## Active Decisions
+- Using CommunityScriptsUILibrary
+- Following community plugin structure
+- Implementing React-based UI
+- Using MEGA.nz API for operations
+
+## Cross-References
+- [projectbrief.md](projectbrief.md)
+- [productContext.md](productContext.md)
+- [progress.md](progress.md)
+
+## Review History
+- 2024-03-22: Initial active context
+- 2024-03-22: Updated current focus
+- 2024-03-22: Added recent changes
+
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Initial active context
+  - Documented current focus
+  - Listed recent changes
+  - Outlined next steps 

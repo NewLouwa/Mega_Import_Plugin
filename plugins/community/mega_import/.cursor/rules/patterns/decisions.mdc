@@ -1,0 +1,162 @@
+/**
+ * @description Decision records for MEGA Import plugin development
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when making design decisions for the MEGA Import plugin"
+ * }
+ */
+
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# MEGA Import Plugin Decision Record
+
+## Status: [CURRENT]
+Last Updated: 2024-11-14
+Version: 1.2.0
+
+## Introduction
+This document captures the significant architectural, technical, and design decisions made during the development of the MEGA Import plugin.
+
+## Executive Summary
+Key decisions that define the implementation approach for the MEGA Import plugin, providing rationale, alternatives considered, and impact.
+
+## Key Points
+- External RPC plugin architecture chosen
+- React for UI components
+- Go for backend implementation
+- Cross-platform binary distribution
+
+## Decision Records
+
+### [DR-001] UI Framework Selection
+- **Decision**: Use React for UI components
+- **Date**: 2024-03-22
+- **Status**: CURRENT
+- **Context**: Need to select a UI framework for developing plugin components
+- **Decision**: Use React with TypeScript for UI components
+- **Alternatives Considered**: Vue.js, plain JavaScript
+- **Rationale**: 
+  - React aligns with Stash UI architecture
+  - TypeScript provides type safety and better IDE support
+  - High developer familiarity and community support
+- **Consequences**:
+  - Need to manage React dependencies
+  - Must follow Stash UI component patterns
+- **Update (2024-11-14)**: 
+  - Confirmed after examining successful plugins like visage and TPDBMarkers
+  - Will use React 17.x to maintain compatibility with current Stash version
+
+### [DR-002] Plugin Location
+- **Decision**: Implement as a community plugin
+- **Date**: 2024-03-22
+- **Status**: CURRENT
+- **Context**: Need to determine where to place plugin files
+- **Decision**: Implement as a community plugin in `plugins/community/mega_import`
+- **Alternatives Considered**: Core plugin, standalone application
+- **Rationale**: 
+  - Community plugins can be distributed easily
+  - Independence from core Stash development cycle
+  - Faster iteration and release process
+- **Consequences**:
+  - Limited access to core Stash internals
+  - Must use official plugin interfaces
+
+### [DR-003] API Integration Method
+- **Decision**: Use Stash GraphQL API
+- **Date**: 2024-03-22
+- **Status**: CURRENT
+- **Context**: Need to determine how to interact with Stash data
+- **Decision**: Use Stash GraphQL API for all data operations
+- **Alternatives Considered**: REST API, direct database access
+- **Rationale**: 
+  - GraphQL provides flexible query capabilities
+  - Official supported API for plugins
+  - Better type safety and documentation
+- **Consequences**:
+  - Need to handle GraphQL query complexities
+  - Must account for API rate limits
+
+### [DR-004] Plugin Architecture
+- **Decision**: Implement as external RPC plugin
+- **Date**: 2024-11-14
+- **Status**: CURRENT
+- **Context**: Need to determine plugin architecture for handling large file operations
+- **Decision**: Implement as external RPC plugin with Go backend
+- **Alternatives Considered**: 
+  - JavaScript-only plugin (embedded)
+  - Client-side only processing
+- **Rationale**: 
+  - Observed success pattern in filemonitor and stashai plugins
+  - Go provides better performance for file processing
+  - Can run external processes for parsing/conversion
+  - Avoids browser memory limitations
+- **Consequences**:
+  - More complex architecture
+  - Need cross-platform compilation
+  - Must handle process communication
+  - Requires careful error handling
+
+### [DR-005] UI Integration
+- **Decision**: Use PluginAPI for navigation and UI integration
+- **Date**: 2024-11-14
+- **Status**: CURRENT
+- **Context**: Need to determine how to integrate with Stash UI
+- **Decision**: Use official PluginAPI for navigation and component registration
+- **Alternatives Considered**: 
+  - Custom iframe integration
+  - Standalone UI with API calls
+- **Rationale**: 
+  - Observed in successful plugins (visage, TPDBMarkers)
+  - Provides native navigation integration
+  - Better user experience with consistent UI
+  - Official supported method
+- **Consequences**:
+  - Must follow PluginAPI patterns
+  - Need to register components properly
+  - Limited UI customization options
+
+### [DR-006] Binary Distribution
+- **Decision**: Use cross-platform binary distribution
+- **Date**: 2024-11-14
+- **Status**: CURRENT
+- **Context**: Need to determine how to distribute the external plugin binary
+- **Decision**: Build and bundle binaries for Windows, macOS, and Linux
+- **Alternatives Considered**: 
+  - Platform-specific plugins
+  - User-compiled binaries
+- **Rationale**: 
+  - Observed in successful plugins (filemonitor, stashai)
+  - Better user experience with pre-built binaries
+  - Avoids dependency installation issues
+- **Consequences**:
+  - Need CI/CD for multiple platforms
+  - Must handle different OS-specific behaviors
+  - Larger plugin package size
+
+## Cross-References
+- [stashPlugins.mdc](../domain/stashPlugins.mdc)
+- [code.mdc](../modes/code.mdc)
+- [progress.mdc](../tasks/progress.mdc)
+
+## Review History
+- 2024-03-22: Initial decision records created
+- 2024-11-14: Updated with plugin architecture and UI integration decisions
+
+## Changelog
+- v1.2.0 (2024-11-14)
+  - Added DR-004: Plugin Architecture
+  - Added DR-005: UI Integration
+  - Added DR-006: Binary Distribution
+  - Updated DR-001 with confirmation from existing plugins
+
+- v1.1.0 (2024-11-14)
+  - Added decision rationale for earlier decisions
+  - Updated cross-references
+  - Added consequences sections
+
+- v1.0.0 (2024-03-22)
+  - Created decision record document
+  - Added initial decisions 

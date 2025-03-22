@@ -1,0 +1,68 @@
+/**
+ * @description Technical context for the MEGA Import plugin
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when working with technical implementation details of the MEGA Import plugin"
+ * }
+ */
+
+# Technical Context
+
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
+
+## Introduction
+Technical environment and implementation details for the MEGA Import plugin.
+
+## Executive Summary
+The plugin is built using React for the UI layer, integrates with MEGA.nz API, and follows Stash's plugin system requirements.
+
+## Key Points
+- React-based UI
+- MEGA.nz API integration
+- Stash plugin system
+- CommunityScriptsUILibrary
+
+## Development Environment
+- Node.js 16+
+- Yarn package manager
+- Git version control
+- Stash development environment
+
+## Technologies Used
+1. Frontend
+   - React
+   - CommunityScriptsUILibrary
+   - CSS/SCSS
+
+2. Backend
+   - MEGA.nz API
+   - Stash Plugin API
+   - File system operations
+
+## Technical Constraints
+- Stash plugin sandbox
+- CSP domain restrictions
+- Large file handling
+- Secure credential storage
+
+## Dependencies
+- React
+- CommunityScriptsUILibrary
+- MEGA.nz API client
+- Stash Plugin API
+
+## Cross-References
+- [projectbrief.md](projectbrief.md)
+- [systemPatterns.md](systemPatterns.md)
+
+## Review History
+- 2024-03-22: Initial technical context
+
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Initial technical context
+  - Documented environment
+  - Listed technologies
+  - Defined constraints 

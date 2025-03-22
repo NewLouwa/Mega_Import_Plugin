@@ -1,0 +1,495 @@
+/**
+ * @description Domain knowledge for Stash plugin development
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when working with Stash plugins"
+ * }
+ */
+
+# Stash Plugin Domain Knowledge
+
+## Status: [CURRENT]
+Last Updated: 2024-11-14
+Version: 2.1.0
+
+## Introduction
+This document contains domain knowledge specific to Stash plugin development, including architecture, APIs, and best practices based on examination of existing plugins.
+
+## Executive Summary
+Comprehensive reference for Stash plugin development covering plugin types, interfaces, structures, APIs, UI integration, and deployment, with real-world implementation patterns observed from existing plugins.
+
+## Key Points
+- Plugin types (External and Embedded)
+- Plugin interfaces (RPC, Raw, JS)
+- UI Plugin API
+- Plugin configuration
+- Deployment and distribution
+- Real-world implementation patterns
+
+## Plugin Types
+
+### External Plugins
+- Executed by running an external binary
+- Communicates with Stash using interfaces (RPC or Raw)
+- Can be implemented in any language
+- Plugin process runs separately from Stash
+- Examples: filemonitor (Python), dupeMarker (Python)
+
+### Embedded Plugins
+- Executed within the Stash process using a scripting system
+- Currently only supports JavaScript via Goja
+- Runs in the same process as Stash
+- Examples: stats, stashai, themeSwitch
+
+## Plugin Interfaces
+
+### RPC Interface
+- Uses JSON-RPC for communication
+- Requires implementing the RPCRunner interface
+- Accepts requests asynchronously
+- Stopping involves sending a stop request to the plugin
+- Less common in observed community plugins
+
+### Raw Interface
+- No specific interface requirements
+- Receives JSON-encoded input via stdin
+- Outputs via stdout (JSON or plain text)
+- Stopping involves killing the spawned process
+- Common for Python-based plugins like filemonitor and dupeMarker
+
+### JS Interface
+- Used for embedded JavaScript plugins
+- Input provided via global `input` variable
+- Output derived from evaluated script value
+- Access to special Stash APIs (logging, GQL, utilities)
+- Most common interface for UI-focused plugins
+
+## Common Plugin Structures
+
+### UI-Only Plugin Structure
+```
+plugins/community/plugin_name/
+├── plugin_name.yml     # Plugin configuration
+├── plugin_name.js      # Main plugin code
+├── plugin_name.css     # Plugin styles (optional)
+```
+
+### Task-Only Plugin Structure
+```
+plugins/community/plugin_name/
+├── plugin_name.yml     # Plugin configuration
+├── plugin_name.py      # Task implementation (or other language)
+├── requirements.txt    # Dependencies (for Python)
+```
+
+### UI + Task Plugin Structure
+```
+plugins/community/plugin_name/
+├── plugin_name.yml     # Plugin configuration
+├── plugin_name.js      # UI code
+├── plugin_name_task.js # Task implementation
+├── plugin_name.css     # Plugin styles (optional)
+```
+
+### Complex Plugin Structure
+```
+plugins/community/plugin_name/
+├── plugin_name.yml     # Plugin configuration
+├── register.js         # Plugin registration
+├── plugin_name.js      # Main UI code
+├── plugin_name.css     # Plugin styles
+├── plugin_name.py      # External task implementation
+└── utils/              # Additional libraries or modules
+    ├── helper.js
+    └── ...
+```
+
+## Plugin Configuration
+
+### Basic UI Plugin Configuration
+```yaml
+name: Plugin Name
+description: Plugin description
+version: 1.0.0
+ui:
+  requires:
+    - CommunityScriptsUILibrary  # For older plugins
+  javascript:
+    - plugin_name.js
+  css:
+    - plugin_name.css
+```
+
+### Basic Task Plugin Configuration
+```yaml
+name: Plugin Name
+description: Plugin description
+version: 1.0.0
+exec:
+  - python  # Or other interpreter/binary
+  - "{pluginDir}/plugin_name.py"
+interface: raw  # Or rpc, js
+tasks:
+  - name: Task Name
+    description: Task description
+    defaultArgs:
+      mode: main
+```
+
+### UI + Task Plugin Configuration
+```yaml
+name: Plugin Name
+description: Plugin description
+version: 1.0.0
+exec:
+  - "{pluginDir}/plugin_name_task.js"
+interface: js
+ui:
+  javascript:
+    - plugin_name.js
+    - register.js
+  css:
+    - plugin_name.css
+tasks:
+  - name: Task Name
+    description: Task description
+    defaultArgs:
+      mode: main
+```
+
+### CSP Configuration
+```yaml
+ui:
+  csp:
+    connect-src:
+      - "https://external-api.com"
+```
+
+### Settings Configuration
+```yaml
+settings:
+  mySetting:
+    displayName: My Setting
+    description: Description of the setting
+    type: BOOLEAN  # Or STRING, NUMBER, etc.
+```
+
+## Plugin Registration Patterns
+
+### Modern PluginAPI Registration
+```javascript
+(function() {
+  const { React } = PluginApi.libraries;
+  const { FontAwesomeSolid } = PluginApi.libraries;
+
+  // Register a route
+  PluginApi.register.route({
+    path: "/plugin/my-plugin",
+    component: MyPluginComponent
+  });
+
+  // Register a navbar component
+  PluginApi.register.component({
+    id: "my-plugin-button",
+    component: () => {
+      const navigate = PluginApi.libraries.ReactRouterDOM.useNavigate();
+      
+      return React.createElement(PluginApi.components.Button, {
+        onClick: () => navigate("/plugin/my-plugin")
+      }, "My Plugin");
+    },
+    target: "navbar"
+  });
+})();
+```
+
+### Legacy CommunityScriptsUILibrary Registration
+```javascript
+(function() {
+  const { registerPlugin, components, hooks } = window.CommunityScriptsUILibrary || {};
+  
+  if (!registerPlugin) {
+    console.error("Plugin: CommunityScriptsUILibrary not loaded");
+    return;
+  }
+  
+  registerPlugin({
+    id: "plugin_id",
+    name: "Plugin Name",
+    icon: "icon-name", 
+    renderUI: renderPluginUI,
+  });
+  
+  function renderPluginUI(target) {
+    // Render UI here
+  }
+})();
+```
+
+## Task Implementation Patterns
+
+### JavaScript Task Implementation
+```javascript
+(function() {
+  // Logging and progress
+  log.Info("Starting task...");
+  log.Progress(0.1);
+  
+  try {
+    // Process inputs
+    const taskArgs = input.args;
+    
+    // Task implementation
+    // ...
+    
+    // Progress updates
+    log.Progress(0.5);
+    
+    // Return results
+    return {
+      Output: "Task completed successfully",
+      Count: 42  // Additional data
+    };
+  } catch (error) {
+    log.Error("Error in task: " + error.message);
+    return {
+      Output: "Error: " + error.message
+    };
+  }
+})();
+```
+
+### Python Task Implementation (Raw Interface)
+```python
+#!/usr/bin/env python3
+import json
+import sys
+import os
+
+def process_input():
+    # Parse input from stdin
+    input_json = json.loads(sys.stdin.read())
+    return input_json
+
+def output_json(output_data):
+    # Write output to stdout
+    sys.stdout.write(json.dumps(output_data))
+    sys.stdout.flush()
+
+def run_task(input_data):
+    # Example task implementation
+    mode = input_data.get("args", {}).get("mode", "default")
+    
+    # Log to stderr for Stash logging
+    print(f"Running in mode: {mode}", file=sys.stderr)
+    
+    # Process task
+    # ...
+    
+    # Return results
+    return {
+        "Output": "Task completed successfully"
+    }
+
+if __name__ == "__main__":
+    try:
+        input_data = process_input()
+        result = run_task(input_data)
+        output_json(result)
+    except Exception as e:
+        # Log error and return error output
+        print(f"Error: {str(e)}", file=sys.stderr)
+        output_json({"Output": f"Error: {str(e)}"})
+```
+
+## UI Integration Patterns
+
+### Modern UI Component Structure
+```javascript
+const MyPlugin = () => {
+  const [isLoading, setIsLoading] = React.useState(false);
+  const [results, setResults] = React.useState(null);
+  const toast = PluginApi.hooks.useToast();
+  
+  const handleAction = async () => {
+    setIsLoading(true);
+    try {
+      // Call plugin task
+      const result = await PluginApi.utils.StashService.runPluginTask(
+        "Plugin Name", 
+        "Task Name", 
+        { param: "value" }
+      );
+      setResults(result);
+      toast.success("Operation completed successfully");
+    } catch (error) {
+      console.error(error);
+      toast.error("Operation failed: " + error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  return (
+    <div className="plugin-container">
+      {/* UI implementation */}
+    </div>
+  );
+};
+```
+
+### Multi-Tab UI Pattern
+```javascript
+const MyPlugin = () => {
+  const [activeTab, setActiveTab] = React.useState("tab1");
+  
+  return (
+    <div className="plugin-container">
+      <ul className="nav nav-tabs">
+        <li className="nav-item" onClick={() => setActiveTab("tab1")}>
+          <a className={`nav-link ${activeTab === "tab1" ? "active" : ""}`}>Tab 1</a>
+        </li>
+        <li className="nav-item" onClick={() => setActiveTab("tab2")}>
+          <a className={`nav-link ${activeTab === "tab2" ? "active" : ""}`}>Tab 2</a>
+        </li>
+      </ul>
+      
+      <div className="tab-content">
+        {activeTab === "tab1" && <Tab1Content />}
+        {activeTab === "tab2" && <Tab2Content />}
+      </div>
+    </div>
+  );
+};
+```
+
+### Component Patching Pattern
+```javascript
+// Patch a Stash component to add custom functionality
+PluginApi.patch.after(
+  "SceneCard.Overlays",
+  (props, originalResult) => {
+    // Add custom overlay to scene cards
+    const sceneId = props.scene.id;
+    
+    return React.createElement(React.Fragment, {}, [
+      originalResult,
+      React.createElement("div", {
+        key: "custom-overlay",
+        className: "custom-overlay",
+        onClick: (e) => {
+          e.stopPropagation();
+          // Custom action
+        }
+      }, "Custom")
+    ]);
+  }
+);
+```
+
+## Common Plugin Patterns Observed
+
+### Library Dependencies
+- Most external plugins include requirements.txt for Python
+- JavaScript plugins often depend on CommunityScriptsUILibrary (legacy) or PluginAPI (modern)
+- Some plugins include vendored dependencies in utils/ or lib/ directories
+
+### Plugin Settings
+- Simple plugins use defaultArgs in tasks
+- Complex plugins use settings section for persistent configuration
+- Settings are accessed via input.ServerConnection.GetPluginConfig()
+
+### Error Handling
+- JavaScript tasks use try/catch with log.Error()
+- Python tasks use try/except with print to stderr
+- UI components use toast notifications for user feedback
+
+### Progress Reporting
+- JavaScript tasks use log.Progress(0-1)
+- Python tasks use print with special prefixes
+- UI components show loading states and progress bars
+
+### CSP Configuration
+- Plugins that access external APIs include connect-src CSP rules
+- This is essential for MEGA Import plugin to access MEGA.nz APIs
+
+## Deployment
+
+### Local Testing
+1. Place plugin in `~/.stash/plugins/` directory
+2. Restart Stash or reload plugins
+3. Check for errors in browser console
+4. Verify plugin appears in plugins list
+
+### Distribution
+- GitHub repository with releases
+- Documentation in README.md
+- Installation instructions
+- Include screenshots or demo GIFs
+- Pre-compiled binaries for external plugins
+
+## Plugin Management
+- Plugins installed via Settings > Plugins
+- Community sources or manually added sources
+- Manual installation by adding YAML files to plugins directory
+- Plugin installation steps often included in README.md
+
+## Best Practices (From Observed Plugins)
+
+### Organization
+- Keep simple plugins in single files
+- Split complex functionality into multiple files
+- Use consistent naming (plugin_name.js, plugin_name.css)
+- Include README with installation and usage instructions
+
+### Security
+- Validate all user inputs
+- Sanitize data from external sources
+- Use HTTPS for external requests
+- Implement proper error handling
+- Scope CSS to avoid interfering with Stash UI
+
+### Performance
+- Minimize DOM operations
+- Avoid excessive API calls
+- Use pagination for large datasets
+- Cache results when appropriate
+- Show loading indicators for long operations
+
+### Compatibility
+- Test across browsers
+- Support both light and dark themes
+- Handle different Stash versions
+- Consider mobile/responsive design
+- Gracefully handle API changes
+
+## Cross-References
+- [debug.mdc](../modes/debug.mdc)
+- [testing.mdc](../tasks/testing.mdc)
+- [troubleshooting.mdc](../patterns/troubleshooting.mdc)
+
+## Review History
+- 2024-03-22: Initial domain knowledge creation
+- 2024-11-14: Updated with detailed plugin interfaces and UI API information
+- 2024-11-14: Added real-world implementation patterns from existing plugins
+
+## Changelog
+- v2.1.0 (2024-11-14)
+  - Added examples from existing plugins
+  - Added common plugin structures
+  - Added UI integration patterns
+  - Added task implementation patterns
+  - Added observed best practices
+  
+- v2.0.0 (2024-11-14)
+  - Added detailed plugin types and interfaces
+  - Added UI Plugin API documentation
+  - Updated plugin registration example
+  - Added JavaScript API for embedded plugins
+  
+- v1.0.0 (2024-03-22)
+  - Created Stash plugin domain knowledge document
+  - Documented plugin architecture
+  - Added API examples
+  - Outlined UI integration patterns
+  - Included deployment instructions 

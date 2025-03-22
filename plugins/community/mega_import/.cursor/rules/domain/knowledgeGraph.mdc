@@ -1,0 +1,116 @@
+/**
+ * @description Knowledge graph for the MEGA Import plugin
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when visualizing relationships in the MEGA Import plugin"
+ * }
+ */
+
+# Knowledge Graph
+
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
+
+## Introduction
+Visual representation of project relationships, components, and dependencies in the MEGA Import plugin.
+
+## Executive Summary
+This document maps the connections between different components of the plugin, showing how they relate to each other and highlighting key dependencies.
+
+## Key Points
+- Component relationships
+- Dependency mapping
+- Decision relationships
+- Technical debt impact areas
+
+## Component Graph
+
+```
+                   ┌─────────────────┐
+                   │  MEGA Import    │
+                   │    Plugin       │
+                   └───────┬─────────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+     ┌────────▼─────┐ ┌────▼────┐ ┌────▼────┐
+     │      UI      │ │  API    │ │  File   │
+     │ Integration  │ │Integration│ │Operations│
+     └────────┬─────┘ └────┬────┘ └────┬────┘
+              │            │            │
+     ┌────────▼─────┐ ┌────▼────┐ ┌────▼────┐
+     │  Navigation  │ │ MEGA.nz │ │  Import │
+     │   Button     │ │   API   │ │ Process │
+     └──────────────┘ └─────────┘ └─────────┘
+```
+
+## Dependency Map
+
+```
+┌───────────────────┐     ┌───────────────────┐
+│CommunityScriptsUI │────▶│   MEGA Import     │
+│     Library       │     │   Plugin UI       │
+└───────────────────┘     └─────────┬─────────┘
+                                    │
+                                    ▼
+┌───────────────────┐     ┌───────────────────┐
+│    MEGA.nz API    │────▶│   File Transfer   │
+│                   │     │     System        │
+└───────────────────┘     └─────────┬─────────┘
+                                    │
+                                    ▼
+┌───────────────────┐     ┌───────────────────┐
+│   Stash Plugin    │◀────│   Integration     │
+│     System        │     │     Layer         │
+└───────────────────┘     └───────────────────┘
+```
+
+## Decision Impact Map
+
+```
+┌───────────────────┐     ┌───────────────────┐     ┌───────────────────┐
+│  UI Framework     │────▶│  Plugin Location  │────▶│  API Integration  │
+│    Decision       │     │    Decision       │     │     Decision      │
+└───────────────────┘     └───────────────────┘     └───────────────────┘
+        │                         │                          │
+        ▼                         ▼                          ▼
+┌───────────────────┐     ┌───────────────────┐     ┌───────────────────┐
+│  UI Components    │     │ Plugin Visibility │     │ Security Model    │
+│                   │     │                   │     │                   │
+└───────────────────┘     └───────────────────┘     └───────────────────┘
+```
+
+## Technical Debt Impact Areas
+
+```
+┌───────────────────┐
+│  Plugin Visibility│
+└─────────┬─────────┘
+          │
+          ▼
+┌───────────────────┐     ┌───────────────────┐
+│  User Experience  │◀────│ Error Handling    │
+└─────────┬─────────┘     └───────────────────┘
+          │
+          ▼
+┌───────────────────┐     ┌───────────────────┐
+│   Performance     │────▶│  Documentation    │
+└───────────────────┘     └───────────────────┘
+```
+
+## Cross-References
+- [systemPatterns.md](systemPatterns.md)
+- [decisions.md](decisions.md)
+- [techDebt.md](techDebt.md)
+
+## Review History
+- 2024-03-22: Initial knowledge graph creation
+
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Created knowledge graph document
+  - Added component graph
+  - Added dependency map
+  - Added decision impact map
+  - Added technical debt impact areas 

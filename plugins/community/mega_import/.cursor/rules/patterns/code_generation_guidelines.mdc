@@ -1,0 +1,137 @@
+/**
+ * @description Code generation guidelines for the MEGA Import plugin
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when generating code for the MEGA Import plugin"
+ * }
+ */
+
+# Code Generation Guidelines
+
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
+
+## Introduction
+Best practices for AI-generated code in the MEGA Import plugin, ensuring high-quality, maintainable, and secure code.
+
+## Executive Summary
+This document defines standards, conventions, and quality requirements for AI-generated code to ensure consistency and maintainability.
+
+## Key Points
+- Code quality standards
+- Style conventions
+- Testing requirements
+- Security practices
+
+## Quality Standards
+
+### Readability
+- Use descriptive variable and function names
+- Add comments for complex logic only
+- Keep functions short and focused
+- Use consistent indentation
+- Limit line length to 80-100 characters
+
+### Maintainability
+- Follow single responsibility principle
+- Avoid deep nesting
+- Use meaningful error messages
+- Minimize dependencies
+- Implement proper error handling
+
+### Performance
+- Minimize DOM operations
+- Use efficient data structures
+- Cache results when appropriate
+- Avoid memory leaks
+- Implement pagination for large datasets
+
+### Security
+- Validate all user inputs
+- Sanitize data before display
+- Use secure API calls
+- Handle credentials securely
+- Follow CSP guidelines
+
+## Style Conventions
+
+### React Components
+- Use functional components with hooks
+- Follow component naming convention: PascalCase
+- Keep components focused on a single concern
+- Implement proper prop validation
+- Use semantic variable names
+
+### JavaScript
+- Use ES6+ syntax
+- Prefer const over let, avoid var
+- Use destructuring for object properties
+- Use template literals for string interpolation
+- Follow naming convention: camelCase for variables and functions
+
+### CSS
+- Use classes (not IDs) for styling
+- Follow BEM naming convention
+- Keep selectors specific but not too nested
+- Use variables for repeated values
+- Ensure responsive design
+
+### YAML Configuration
+- Use consistent indentation (2 spaces)
+- Follow key naming convention: snake_case
+- Add comments for non-obvious settings
+- Group related settings
+- Validate structure with schema
+
+## Testing Requirements
+
+### Unit Tests
+- Test all public functions
+- Use descriptive test names
+- Follow AAA pattern (Arrange, Act, Assert)
+- Mock external dependencies
+- Cover edge cases
+
+### Integration Tests
+- Test component interactions
+- Verify UI functionality
+- Test API integrations
+- Validate error handling
+- Test user workflows
+
+### Manual Testing
+- Verify UI appearance
+- Test with different browsers
+- Check responsive behavior
+- Validate accessibility
+- Test performance with large datasets
+
+## Code Review Checklist
+
+- [ ] Follows project style conventions
+- [ ] Meets quality standards
+- [ ] Includes appropriate tests
+- [ ] Handles errors properly
+- [ ] Provides appropriate documentation
+- [ ] Addresses security concerns
+- [ ] Optimizes for performance
+- [ ] Maintains compatibility
+- [ ] Follows accessibility guidelines
+- [ ] Implements proper logging
+
+## Cross-References
+- [techContext.md](techContext.md)
+- [systemPatterns.md](systemPatterns.md)
+- [llm_patterns.md](llm_patterns.md)
+
+## Review History
+- 2024-03-22: Initial code generation guidelines creation
+
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Created code generation guidelines
+  - Added quality standards
+  - Defined style conventions
+  - Specified testing requirements
+  - Created code review checklist 

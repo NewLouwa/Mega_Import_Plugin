@@ -1,0 +1,81 @@
+/**
+ * @description System patterns for the MEGA Import plugin
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when working with system architecture for the MEGA Import plugin"
+ * }
+ */
+
+# System Patterns
+
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
+
+## Introduction
+This document outlines the system architecture patterns used in the MEGA Import plugin.
+
+## Executive Summary
+A reference guide for system patterns used in the MEGA Import plugin, including architecture, data flow, and integration patterns.
+
+## Key Points
+- Plugin architecture
+- UI component pattern
+- API integration patterns
+- Error handling approach
+
+## Architecture Patterns
+
+### Plugin Structure
+- Modular design with separation of concerns
+- Clear boundaries between UI, business logic, and API integration
+- Event-driven communication
+
+### UI Component Pattern
+- React functional components with hooks
+- Centralized state management
+- Prop-based configuration
+
+### API Integration Pattern
+- Async/await for API calls
+- Centralized error handling
+- Response caching where appropriate
+
+## Data Flow Patterns
+
+### Request-Response Pattern
+- Structured request formatting
+- Response validation
+- Error normalization
+
+### State Management
+- Single source of truth
+- Immutable state updates
+- Clear state transitions
+
+## Error Handling Patterns
+
+### User-Facing Errors
+- Friendly error messages
+- Contextual error display
+- Recovery suggestions
+
+### System Errors
+- Detailed logging
+- Graceful degradation
+- Automatic retry for transient failures
+
+## Cross-References
+- [techContext.mdc](techContext.mdc)
+- [codeDocMap.mdc](codeDocMap.mdc)
+- [decisions.mdc](../patterns/decisions.mdc)
+
+## Review History
+- 2024-03-22: Initial system patterns creation
+
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Created system patterns document
+  - Defined architecture patterns
+  - Outlined data flow patterns
+  - Described error handling approaches 

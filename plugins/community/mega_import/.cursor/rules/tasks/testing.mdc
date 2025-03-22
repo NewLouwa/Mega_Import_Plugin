@@ -1,0 +1,151 @@
+/**
+ * @description Testing procedures for the MEGA Import plugin
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when testing the MEGA Import plugin"
+ * }
+ */
+
+# Testing Tasks
+
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
+
+## Introduction
+This document outlines testing procedures for the MEGA Import plugin to ensure functionality, reliability, and user experience.
+
+## Executive Summary
+Comprehensive testing guidelines covering unit tests, integration tests, UI tests, and user acceptance testing.
+
+## Key Points
+- Test environment setup
+- Test case definition
+- Testing methodologies
+- Validation criteria
+
+## Testing Types
+
+### Unit Testing
+- Test individual components and functions in isolation
+- Mock dependencies and external services
+- Focus on function logic, error handling, and edge cases
+- Tools: Jest, React Testing Library
+
+#### Example Unit Test Structure
+```javascript
+describe('MegaImportParser', () => {
+  test('should parse valid MEGA links', () => {
+    const parser = new MegaImportParser();
+    const result = parser.parseLink('https://mega.nz/file/valid-link');
+    expect(result.isValid).toBe(true);
+    expect(result.fileId).toBe('valid-link');
+  });
+
+  test('should reject invalid links', () => {
+    const parser = new MegaImportParser();
+    const result = parser.parseLink('https://example.com/not-mega');
+    expect(result.isValid).toBe(false);
+    expect(result.error).toBeDefined();
+  });
+});
+```
+
+### Integration Testing
+- Test interaction between plugin components
+- Verify plugin integration with Stash APIs
+- Test data flow through the application
+- Validate event handling and state management
+
+#### Integration Test Scenarios
+1. Plugin initialization and registration
+2. API request/response cycle
+3. UI state updates based on backend operations
+4. Error handling between components
+
+### UI Testing
+- Verify component rendering
+- Test user interactions (clicks, inputs, etc.)
+- Validate accessibility requirements
+- Test responsiveness and layout
+
+#### UI Test Checklist
+- [ ] Plugin button appears in designated location
+- [ ] Input form renders correctly
+- [ ] Validation feedback is displayed for invalid inputs
+- [ ] Progress indicators function during operations
+- [ ] Success/error messages are displayed appropriately
+- [ ] UI adapts to different viewport sizes
+
+### User Acceptance Testing
+- Verify plugin meets user requirements
+- Test complete user workflows
+- Assess usability and UX
+- Gather feedback on areas for improvement
+
+#### User Workflow Test Scenarios
+1. User finds and opens plugin interface
+2. User enters valid MEGA link
+3. User initiates import process
+4. System processes import with progress feedback
+5. User receives confirmation of successful import
+6. Imported content appears in the appropriate location
+
+## Test Environment
+
+### Local Testing
+1. Run Stash locally with plugin enabled
+2. Access via http://localhost:port
+3. Use browser developer tools for debugging
+4. Test with real MEGA links (if possible) or mock responses
+
+### Browser Compatibility
+- Test in latest versions of Chrome, Firefox, Safari
+- Verify functionality in Stash's embedded browser
+- Document any browser-specific limitations
+
+## Test Reporting
+
+### Bug Reporting Format
+```
+## Bug: [Bug Title]
+
+### Description
+[Description of the issue]
+
+### Steps to Reproduce
+1. Step 1
+2. Step 2
+3. Step 3
+
+### Expected Behavior
+[What should happen]
+
+### Actual Behavior
+[What actually happens]
+
+### Environment
+- Browser: [Browser Name and Version]
+- Stash Version: [Version Number]
+- Plugin Version: [Version Number]
+```
+
+### Test Results Documentation
+- Document test results in the project repository
+- Update test status in issue tracking system
+- Link test results to relevant features/fixes
+
+## Cross-References
+- [debug.mdc](../modes/debug.mdc)
+- [troubleshooting.mdc](../patterns/troubleshooting.mdc)
+- [qualityAssurance.mdc](../domain/qualityAssurance.mdc)
+
+## Review History
+- 2024-03-22: Initial testing tasks creation
+
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Created testing tasks document
+  - Defined testing types and methodologies
+  - Added example test structures and scenarios
+  - Outlined test environments and reporting formats 

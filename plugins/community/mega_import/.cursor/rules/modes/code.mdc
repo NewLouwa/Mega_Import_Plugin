@@ -1,0 +1,278 @@
+/**
+ * @description Code mode rules for MEGA Import plugin development
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied to all files in the MEGA Import plugin"
+ * }
+ */
+
+# Code Mode Rules
+
+## Status: [CURRENT]
+Last Updated: 2024-11-14
+Version: 1.2.0
+
+## Introduction
+Code mode specific rules for developing and maintaining the MEGA Import plugin, based on patterns observed in successful community plugins.
+
+## Executive Summary
+These rules provide guidelines for code implementation, styling, and quality standards for the MEGA Import plugin, focusing on external plugin with RPC interface and following patterns observed in existing successful plugins.
+
+## Key Points
+- Code style conventions
+- Implementation standards
+- External RPC plugin implementation
+- UI integration with PluginAPI
+- File structure recommendations
+- Quality requirements
+- Testing guidelines
+
+## Code Style Conventions
+
+### Go (for external plugin)
+- Follow standard Go conventions (gofmt)
+- Use meaningful package names
+- Function naming: camelCase
+- Use error handling for all operations
+- Add comments for exported functions
+- Use consistent indentation
+- Implement proper logging
+- Follow patterns from other successful Go-based plugins
+
+### JavaScript/React (for UI)
+- Use functional components with hooks
+- Follow component naming convention: PascalCase
+- Use camelCase for variables and functions
+- Use ES6+ syntax
+- Add comments only for complex logic
+- Use consistent indentation (2 spaces)
+- Limit line length to 80-100 characters
+- Match UI patterns from successful plugins like stashai
+
+### CSS
+- Use BEM naming convention (observed in multiple plugins)
+- Keep selectors specific but not too nested
+- Use variables for repeated values
+- Group related styles
+- Scope CSS to prevent interference with Stash UI (critical pattern observed)
+
+### YAML Configuration
+- Use consistent indentation (2 spaces)
+- Follow key naming convention: snake_case
+- Group related settings
+- Include proper CSP config for MEGA.nz API access
+
+## Plugin Structure
+
+Based on examining successful plugins, we should structure our plugin as follows:
+
+```
+plugins/community/mega_import/
+├── mega_import.yml      # Plugin configuration
+├── mega_import          # Go binary for RPC interface
+├── register.js          # PluginAPI registration
+├── mega_import.js       # Main UI code
+├── mega_import.css      # Plugin styles
+├── utils/               # Utility functions
+│   └── format.js        # Formatting utilities
+└── assets/              # Optional image assets
+```
+
+## RPC Plugin Implementation
+
+### Interface Implementation
+```go
+package main
+
+import (
+	"context"
+	"log"
+
+	"github.com/stashapp/stash/pkg/plugin"
+	"github.com/stashapp/stash/pkg/plugin/common"
+)
+
+type megaImportPlugin struct {
+	serverConnection *common.ServerConnection
+}
+
+func (p *megaImportPlugin) Name() string {
+	return "MEGA Import"
+}
+
+func (p *megaImportPlugin) Version() string {
+	return "1.0.0"
+}
+
+func (p *megaImportPlugin) Execute(ctx context.Context, input *common.PluginInput) (*common.PluginOutput, error) {
+	// Store server connection for progress reporting (pattern from successful plugins)
+	p.serverConnection = input.ServerConnection
+	
+	// Log beginning of task
+	log.Printf("Starting MEGA import with args: %v", input.Args)
+	p.serverConnection.UpdateProgress(0.1)
+	
+	// Implement MEGA import logic here
+	// ...
+	
+	// Example progress reporting
+	p.serverConnection.UpdateProgress(0.5)
+	
+	// Return results
+	return &common.PluginOutput{
+		Output: "Successfully imported files from MEGA",
+	}, nil
+}
+
+func main() {
+	// Create and run the plugin
+	plugin := &megaImportPlugin{}
+	err := plugin.plugin.RPCRunner.Start()
+	if err != nil {
+		log.Fatalf("Error starting plugin: %v", err)
+	}
+}
+```
+
+### Progress Reporting
+```go
+// Report progress back to Stash (pattern observed in multiple plugins)
+p.serverConnection.UpdateProgress(0.5) // 50% complete
+log.Printf("Processing file: %s", filename)
+```
+
+## UI Integration
+
+Following patterns from successful plugins (e.g., stashai, visage):
+
+### PluginAPI Registration
+```javascript
+(function() {
+  const { React } = PluginApi.libraries;
+  const { FontAwesomeSolid } = PluginApi.libraries;
+
+  // Define main component with loading states (observed pattern)
+  const MegaImportPage = () => {
+    const [isLoading, setIsLoading] = React.useState(false);
+    const [megaUrl, setMegaUrl] = React.useState('');
+    const [results, setResults] = React.useState(null);
+    const toast = PluginApi.hooks.useToast(); // Toast notifications (common pattern)
+    
+    const handleImport = async () => {
+      setIsLoading(true);
+      try {
+        // Call the plugin task (pattern from multiple plugins)
+        const result = await PluginApi.utils.StashService.runPluginTask(
+          "MEGA Import", 
+          "Import from MEGA", 
+          { url: megaUrl }
+        );
+        setResults(result);
+        toast.success("Import completed successfully");
+      } catch (error) {
+        console.error("Import failed:", error);
+        toast.error("Import failed: " + error.message);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    return (
+      <div className="mega-import-container">
+        {/* UI implementation following observed patterns */}
+        {isLoading && <PluginApi.components.LoadingIndicator />}
+      </div>
+    );
+  };
+
+  // Register the route (standard pattern)
+  PluginApi.register.route({
+    path: "/plugin/mega-import",
+    component: MegaImportPage
+  });
+
+  // Add navigation button (pattern from multiple plugins)
+  PluginApi.register.component({
+    id: "mega-import-nav",
+    component: () => {
+      const navigate = PluginApi.libraries.ReactRouterDOM.useNavigate();
+      
+      return React.createElement(PluginApi.components.Button, {
+        className: "mega-import-button",
+        variant: "secondary",
+        onClick: () => navigate("/plugin/mega-import"),
+      }, [
+        React.createElement(FontAwesomeSolid.faCloudDownloadAlt, {
+          className: "me-2",
+          key: "icon"
+        }),
+        "MEGA Import"
+      ]);
+    },
+    target: "navbar"
+  });
+})();
+```
+
+## Implementation Guidelines
+- Follow single responsibility principle
+- Implement proper error handling
+- Validate all user inputs
+- Handle file operations safely
+- Use proper logging with log levels
+- Report progress for long-running operations
+- Use asynchronous operations for file transfers
+- Implement graceful shutdown
+- Show loading states for UI operations (observed pattern)
+- Use toast notifications for user feedback (observed pattern)
+- Cache results when appropriate (observed pattern)
+
+## Testing Requirements
+- Test plugin RPC interface
+- Verify communication with Stash
+- Test UI functionality
+- Test MEGA.nz API integration
+- Validate error handling
+- Test long-running operations
+- Test progress reporting
+- Test in multiple browsers (observed critical requirement)
+- Verify both light and dark theme compatibility (observed pattern)
+
+## Documentation Requirements
+- Update related memory bank files
+- Document plugin configuration
+- Add code documentation for complex functions
+- Keep README up-to-date with installation instructions
+- Include screenshots in documentation (observed pattern)
+- Provide example usage scenarios (observed pattern)
+- Document known limitations (observed pattern)
+
+## Cross-References
+- [stashPlugins.mdc](../domain/stashPlugins.mdc)
+- [decisions.mdc](../patterns/decisions.mdc)
+- [techContext.mdc](../domain/techContext.mdc)
+
+## Review History
+- 2024-03-22: Initial code mode rules creation
+- 2024-11-14: Updated for external RPC plugin implementation
+- 2024-11-14: Updated with patterns from existing plugins
+
+## Changelog
+- v1.2.0 (2024-11-14)
+  - Added plugin structure based on successful examples
+  - Updated UI integration with observed patterns
+  - Added toast notifications and loading states
+  - Enhanced implementation guidelines with observed patterns
+  
+- v1.1.0 (2024-11-14)
+  - Added Go code style conventions
+  - Added RPC plugin implementation guidelines
+  - Updated UI integration to use PluginAPI
+  - Added progress reporting example
+  
+- v1.0.0 (2024-03-22)
+  - Created code mode rules
+  - Added style conventions
+  - Defined implementation guidelines
+  - Specified testing requirements
+  - Added documentation requirements 

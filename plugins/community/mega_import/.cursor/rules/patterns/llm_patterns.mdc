@@ -1,0 +1,148 @@
+/**
+ * @description LLM patterns for the MEGA Import plugin development
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when using AI/LLM assistance with the MEGA Import plugin"
+ * }
+ */
+
+# LLM Patterns
+
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
+
+## Introduction
+Document of effective LLM prompting patterns and AI interaction techniques for the MEGA Import plugin development.
+
+## Executive Summary
+This document catalogs successful AI interaction techniques, records anti-patterns to avoid, and provides templates for common operations.
+
+## Key Points
+- Effective prompting patterns
+- AI interaction techniques
+- Anti-patterns to avoid
+- Operation templates
+
+## Successful Patterns
+
+### Plugin Structure Analysis
+- **Pattern**: Comparative Analysis
+- **Description**: Compare working plugins with our plugin structure
+- **Example**:
+  ```
+  Analyze the structure of working plugins (like stash-realbooru) and compare 
+  with our MEGA Import plugin structure. Identify key differences that could 
+  affect plugin functionality.
+  ```
+- **Why It Works**: Leverages pattern recognition in LLM to identify structural differences
+- **When To Use**: When troubleshooting plugin visibility or integration issues
+
+### Code Amendment
+- **Pattern**: Precise Edit Instructions
+- **Description**: Clearly specify file, issue, and required changes
+- **Example**:
+  ```
+  Edit the mega_import.yml file to add the CommunityScriptsUILibrary requirement 
+  and match the UI structure of working plugins.
+  ```
+- **Why It Works**: Provides clear scope and direction for changes
+- **When To Use**: When making targeted code changes
+
+### Documentation Generation
+- **Pattern**: Structured Template Filling
+- **Description**: Use a consistent structure for documentation generation
+- **Example**:
+  ```
+  Create a technical document with the following sections:
+  1. Introduction
+  2. Executive Summary
+  3. Key Points
+  4. Implementation Details
+  5. Cross-References
+  ```
+- **Why It Works**: Ensures consistent documentation format
+- **When To Use**: When creating new documentation
+
+## Anti-Patterns
+
+### Ambiguous Requests
+- **Anti-Pattern**: "Fix the plugin"
+- **Why It Fails**: Too vague, lacks specific context
+- **Better Alternative**: "Analyze why the plugin isn't visible in navigation and suggest specific fixes"
+
+### Inconsistent Structure
+- **Anti-Pattern**: Mixing documentation styles
+- **Why It Fails**: Creates confusion and inconsistency
+- **Better Alternative**: Follow consistent documentation structure from cursor rules
+
+### Information Overload
+- **Anti-Pattern**: Providing too much irrelevant information
+- **Why It Fails**: Dilutes important context
+- **Better Alternative**: Provide targeted, relevant information
+
+## Templates for Common Operations
+
+### Debugging Template
+```
+I need to debug an issue with [component].
+
+Current behavior: [description]
+Expected behavior: [description]
+
+Relevant code:
+```[file path]
+[code snippet]
+```
+
+Please:
+1. Analyze the potential causes
+2. Suggest debugging steps
+3. Propose potential solutions
+```
+
+### Feature Implementation Template
+```
+I need to implement [feature] for the MEGA Import plugin.
+
+Requirements:
+- [requirement 1]
+- [requirement 2]
+
+Related files:
+- [file path 1]
+- [file path 2]
+
+Please:
+1. Outline the implementation approach
+2. Provide necessary code changes
+3. Suggest testing steps
+```
+
+### Documentation Template
+```
+Create documentation for [topic] following the cursor rules structure:
+
+- Status header
+- Introduction
+- Executive Summary
+- Key Points
+- [Specific sections]
+- Cross-References
+- Review History
+- Changelog
+```
+
+## Cross-References
+- [activeContext.md](activeContext.md)
+- [code_generation_guidelines.md](code_generation_guidelines.md)
+
+## Review History
+- 2024-03-22: Initial LLM patterns document creation
+
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Created LLM patterns document
+  - Added successful patterns
+  - Documented anti-patterns
+  - Created operation templates 

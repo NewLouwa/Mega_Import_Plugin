@@ -1,0 +1,60 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Memory Bank Index
+
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
+
+## Quick Navigation
+
+### Core Documents
+- [Project Brief](mdc:projectbrief.md) - Foundation document defining core requirements and goals
+- [Product Context](mdc:productContext.md) - Why this project exists and problems it solves
+- [Active Context](mdc:activeContext.md) - Current work focus and recent changes
+- [System Patterns](mdc:systemPatterns.md) - System architecture and design patterns
+- [Technical Context](mdc:techContext.md) - Technical environment and implementation details
+- [Progress Tracking](mdc:progress.md) - Implementation status and next steps
+
+### Navigation and Reference
+- [Knowledge Graph](mdc:knowledgeGraph.md) - Visual representation of project relationships
+- [Timeline](mdc:timeline.md) - Project timeline with milestones
+- [Changelog](mdc:changelog.md) - Record of significant document changes
+- [Communication Registry](mdc:communicationRegistry.md) - Documentation update communications
+
+### Specialized Documentation
+- [Decisions](mdc:decisions.md) - Key technical and architectural decisions
+- [Technical Debt](mdc:techDebt.md) - Known technical debt and improvements
+- [Code Documentation Map](mdc:codeDocMap.md) - Maps code files to documentation
+- [LLM Patterns](mdc:llm_patterns.md) - Effective AI interaction patterns
+- [Code Generation Guidelines](mdc:code_generation_guidelines.md) - Best practices for AI-generated code
+
+## Document Status Overview
+- [CURRENT] - Up-to-date documents
+- [NEEDS UPDATE] - Documents requiring updates
+- [DEPRECATED] - No longer relevant
+- [DRAFT] - In draft state
+- [REVIEW] - Ready for review
+- [PENDING APPROVAL] - Awaiting approval
+
+## Recent Updates
+- 2024-03-22: Created initial memory bank structure
+- 2024-03-22: Added core documentation files
+- 2024-03-22: Created navigation index
+
+## Cross-References
+- [projectbrief.md](mdc:projectbrief.md)
+- [activeContext.md](mdc:activeContext.md)
+
+## Review History
+- 2024-03-22: Initial index creation
+
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Created index file
+  - Added document navigation
+  - Listed document status
+  - Added recent updates 

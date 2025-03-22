@@ -1,0 +1,79 @@
+/**
+ * @description Project brief for the MEGA Import plugin
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when working with the overall project requirements for the MEGA Import plugin"
+ * }
+ */
+
+# Project Brief
+
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
+
+## Introduction
+The MEGA Import plugin for Stash enables users to import files directly from MEGA.nz cloud storage into their Stash library.
+
+## Executive Summary
+A Stash plugin that provides seamless integration with MEGA.nz, allowing users to browse, select, and import files directly into their Stash library through a modern UI interface.
+
+## Key Points
+- Cloud storage integration
+- Modern UI/UX
+- Secure authentication
+- Progress tracking
+- Large file support
+
+## Core Requirements
+1. MEGA.nz Integration
+   - File browsing
+   - File selection
+   - File downloading
+   - Progress tracking
+
+2. Security
+   - Secure credential storage
+   - Encrypted communication
+   - Safe file handling
+
+3. User Experience
+   - Intuitive interface
+   - Progress feedback
+   - Error handling
+   - Performance optimization
+
+## Goals
+- Seamless file import from MEGA.nz
+- User-friendly interface
+- Reliable and secure operation
+- Efficient file handling
+- Community plugin standards compliance
+
+## Scope
+- File browsing and selection
+- File import functionality
+- Progress tracking
+- Error handling
+- UI integration with Stash
+
+## Constraints
+- Must work within Stash's plugin system
+- Must handle large files efficiently
+- Must maintain security standards
+- Must follow community plugin guidelines
+
+## Cross-References
+- [productContext.md](productContext.md)
+- [systemPatterns.md](systemPatterns.md)
+- [techContext.md](techContext.md)
+
+## Review History
+- 2024-03-22: Initial project brief
+
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Initial project brief
+  - Defined core requirements
+  - Established project goals
+  - Set project scope 

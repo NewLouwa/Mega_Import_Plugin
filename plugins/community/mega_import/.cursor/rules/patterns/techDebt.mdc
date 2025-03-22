@@ -1,0 +1,124 @@
+/**
+ * @description Technical debt tracking for MEGA Import plugin
+ * @autoAttach {
+ *   "patterns": ["plugins/community/mega_import/**/*"],
+ *   "description": "Applied when managing technical debt for the MEGA Import plugin"
+ * }
+ */
+
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# MEGA Import Plugin Technical Debt
+
+## Status: [CURRENT]
+Last Updated: 2024-11-14
+Version: 1.1.0
+
+## Introduction
+This document tracks known technical debt, planned improvements, and technical risks for the MEGA Import plugin.
+
+## Executive Summary
+Systematic tracking of technical compromises, future improvements, and potential risks to guide development priorities and ensure long-term maintainability.
+
+## Key Points
+- Identified technical debt items
+- Prioritized improvement plans
+- Known technical risks
+- Timeline for addressing critical items
+
+## Current Technical Debt
+
+### Code Structure
+1. **Non-Standard Plugin Structure** (HIGH)
+   - Current implementation doesn't match successful plugin patterns
+   - **Resolution Plan**: Refactor to external RPC plugin structure by 2024-11-30
+   - **Insight from Existing Plugins**: Successful plugins like filemonitor use RPC structure
+
+2. **JavaScript-Only Implementation** (HIGH)
+   - Current implementation doesn't leverage native performance benefits for file operations
+   - **Resolution Plan**: Migrate to Go backend for file operations by 2024-12-15
+   - **Insight from Existing Plugins**: High-performance plugins use Go (filemonitor, stashai)
+
+3. **Direct DOM Manipulation** (MEDIUM)
+   - Some components use direct DOM access instead of React patterns
+   - **Resolution Plan**: Refactor to use React refs and proper lifecycle methods by 2024-12-10
+   - **Insight from Existing Plugins**: Clean React patterns in visage and TPDBMarkers
+
+### API Integration
+1. **Rate Limiting Handling** (MEDIUM)
+   - No proper handling of API rate limits
+   - **Resolution Plan**: Implement rate limiting and retry logic by 2024-11-25
+   - **Insight from Existing Plugins**: Observed proper error handling in filemonitor
+
+2. **Error Handling** (HIGH)
+   - Incomplete error handling for API responses
+   - **Resolution Plan**: Implement comprehensive error handling by 2024-11-20
+   - **Insight from Existing Plugins**: Robust error handling with user feedback in successful plugins
+
+### User Experience
+1. **Loading States** (MEDIUM)
+   - Missing loading indicators during operations
+   - **Resolution Plan**: Add proper loading states by 2024-11-18
+   - **Insight from Existing Plugins**: All successful plugins implement loading indicators
+
+2. **Settings Management** (HIGH)
+   - Basic settings implementation without validation
+   - **Resolution Plan**: Implement robust settings management by 2024-12-05
+   - **Insight from Existing Plugins**: Comprehensive settings management in filemonitor
+
+## Planned Improvements
+
+1. **Cross-Platform Binary Distribution** (HIGH)
+   - Implement build pipeline for Windows, macOS, and Linux binaries
+   - Target: 2024-12-20
+   - **Insight from Existing Plugins**: filemonitor and stashai include platform-specific binaries
+
+2. **Toast Notification System** (MEDIUM)
+   - Implement toast notifications for user feedback
+   - Target: 2024-11-22
+   - **Insight from Existing Plugins**: All successful plugins use toast notifications
+
+3. **Plugin Auto-Update** (LOW)
+   - Add auto-update capability for plugin binaries
+   - Target: 2025-01-15
+   - **Insight from Existing Plugins**: Not widely implemented but would be beneficial
+
+## Technical Risks
+
+1. **MEGA API Changes** (MEDIUM)
+   - Risk: MEGA.nz API changes could break functionality
+   - Mitigation: Implement version checking and graceful degradation
+   - **Insight from Existing Plugins**: Version checking implemented in successful plugins
+
+2. **Browser Memory Limitations** (HIGH)
+   - Risk: Large file operations exceed browser memory limits
+   - Mitigation: Move to external RPC plugin architecture with Go backend
+   - **Insight from Existing Plugins**: High-performance plugins use external processing
+
+3. **Cross-Platform Compatibility** (MEDIUM)
+   - Risk: Different behavior across operating systems
+   - Mitigation: Standardized filesystem access through Go standard library
+   - **Insight from Existing Plugins**: Successful plugins handle cross-platform issues well
+
+## Cross-References
+- [decisions.mdc](decisions.mdc)
+- [code.mdc](../modes/code.mdc)
+- [progress.mdc](../tasks/progress.mdc)
+
+## Review History
+- 2024-03-22: Initial technical debt documentation
+- 2024-11-14: Updated with insights from existing plugins
+
+## Changelog
+- v1.1.0 (2024-11-14)
+  - Updated with insights from examining existing plugins
+  - Added concrete resolution plans and timelines
+  - Added references to observed patterns in successful plugins
+
+- v1.0.0 (2024-03-22)
+  - Created technical debt document
+  - Documented initial technical debt items
+  - Added planned improvements and risks 

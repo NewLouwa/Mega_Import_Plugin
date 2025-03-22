@@ -1,0 +1,158 @@
+/**
+ * @description Reusable troubleshooting patterns for plugin development
+ * @autoAttach {
+ *   "patterns": ["plugins/community/**/*"],
+ *   "description": "Applied when debugging community plugins"
+ * }
+ */
+
+# Troubleshooting Patterns
+
+## Status: [CURRENT]
+Last Updated: 2024-03-22
+Version: 1.0.0
+
+## Introduction
+This document defines reusable troubleshooting patterns for community plugin development in Stash.
+
+## Executive Summary
+Established patterns for diagnosing and resolving common issues in plugin development.
+
+## Key Points
+- Systematic issue investigation
+- Root cause analysis approaches
+- Common resolution patterns
+- Documentation of findings
+
+## Investigation Patterns
+
+### Console Diagnosis
+```javascript
+// Structured logging pattern for investigations
+const logDebug = (area, message, data) => {
+  console.group(`[DEBUG:${area}]`);
+  console.log(message);
+  if (data) console.dir(data);
+  console.groupEnd();
+};
+
+// Usage
+logDebug('API', 'Request failed', { url, params, error });
+```
+
+### DOM Inspection
+```javascript
+// Helper to inspect DOM structure
+const inspectElement = (selector) => {
+  const el = document.querySelector(selector);
+  if (!el) {
+    console.error(`Element not found: ${selector}`);
+    return;
+  }
+  
+  console.group(`Element: ${selector}`);
+  console.log('Properties:', { 
+    className: el.className,
+    id: el.id,
+    innerHTML: el.innerHTML.substring(0, 100) + '...',
+    computedStyle: window.getComputedStyle(el)
+  });
+  console.groupEnd();
+};
+```
+
+### Network Monitoring
+```javascript
+// Network request monitoring
+const monitorFetch = () => {
+  const originalFetch = window.fetch;
+  
+  window.fetch = function(...args) {
+    console.group('Fetch Request');
+    console.log('URL:', args[0]);
+    console.log('Options:', args[1]);
+    console.groupEnd();
+    
+    return originalFetch.apply(this, args)
+      .then(response => {
+        console.log(`Response for ${args[0]}:`, response.status);
+        return response;
+      })
+      .catch(error => {
+        console.error(`Error for ${args[0]}:`, error);
+        throw error;
+      });
+  };
+};
+```
+
+## Resolution Patterns
+
+### Dependency Verification
+1. Check YAML configuration for required dependencies
+2. Validate dependency versions
+3. Test with known working versions
+4. Check for dependency conflicts
+
+### Plugin Registration
+1. Confirm plugin structure matches community plugin guidelines
+2. Verify register.js contains proper UI registration
+3. Check for event listeners and proper cleanup
+4. Validate plugin initialization sequence
+
+### CSS Isolation
+1. Use plugin-specific CSS classes with namespacing
+2. Verify CSS file inclusion in YAML
+3. Check for conflicting styles with browser inspector
+4. Test styles in isolation
+
+## Testing Patterns
+
+### Incremental Testing
+1. Start with minimal functionality
+2. Add features incrementally
+3. Test each addition in isolation
+4. Validate integration points
+
+### Regression Testing
+1. Document working state before changes
+2. Implement changes
+3. Test previous functionality
+4. Verify no regressions
+
+## Documentation Patterns
+
+### Issue Documentation
+```markdown
+## Issue: [Brief Description]
+
+### Symptoms
+- Symptom 1
+- Symptom 2
+
+### Root Cause
+[Explanation of root cause]
+
+### Resolution
+1. Step 1
+2. Step 2
+
+### Prevention
+- Recommendation 1
+- Recommendation 2
+```
+
+## Cross-References
+- [debug.mdc](../modes/debug.mdc)
+- [errorHandling.mdc](../patterns/errorHandling.mdc)
+- [testing.mdc](../tasks/testing.mdc)
+
+## Review History
+- 2024-03-22: Initial troubleshooting patterns creation
+
+## Changelog
+- v1.0.0 (2024-03-22)
+  - Created troubleshooting patterns document
+  - Added investigation patterns with code examples
+  - Documented resolution patterns
+  - Added testing and documentation patterns 
