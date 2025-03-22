@@ -1,0 +1,150 @@
+.mega-import-container {
+    padding: 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.mega-file-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 20px;
+    margin-top: 20px;
+}
+
+.mega-file-item {
+    padding: 15px;
+    border: 1px solid var(--bs-border-color);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.mega-file-item:hover {
+    background-color: var(--bs-secondary-bg);
+    transform: translateY(-2px);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.mega-file-item.selected {
+    border-color: var(--bs-primary);
+    background-color: var(--bs-primary-bg);
+}
+
+.mega-file-name {
+    font-weight: 500;
+    margin-bottom: 8px;
+}
+
+.mega-file-info {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.9em;
+    color: var(--bs-secondary);
+}
+
+.mega-file-size {
+    margin-right: 10px;
+}
+
+.mega-file-date {
+    color: #999;
+}
+
+.mega-navigation {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    padding: 10px;
+    background-color: var(--bs-secondary);
+    border-radius: 4px;
+}
+
+.mega-path {
+    font-family: monospace;
+    color: var(--bs-light);
+}
+
+.mega-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.mega-button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 4px;
+    background-color: var(--bs-primary);
+    color: white;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.mega-button:hover {
+    background-color: var(--bs-primary-dark);
+}
+
+.mega-button:disabled {
+    background-color: var(--bs-secondary);
+    cursor: not-allowed;
+}
+
+.mega-import-button {
+    background-color: #d9272e; /* MEGA's brand color */
+}
+
+.mega-import-button:hover {
+    background-color: #b31f25; /* Darker shade of MEGA's brand color */
+}
+
+.mega-button.mega-import-button:disabled {
+    background-color: #cccccc;
+}
+
+.mega-logo {
+    width: 24px;
+    height: 24px;
+    object-fit: contain;
+}
+
+.mega-error {
+    padding: 15px;
+    margin: 10px 0;
+    background-color: var(--bs-danger-bg);
+    border: 1px solid var(--bs-danger);
+    border-radius: 4px;
+    color: var(--bs-danger);
+}
+
+.mega-success {
+    padding: 15px;
+    margin: 10px 0;
+    background-color: var(--bs-success-bg);
+    border: 1px solid var(--bs-success);
+    border-radius: 4px;
+    color: var(--bs-success);
+}
+
+.mega-loading {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 200px;
+}
+
+.mega-loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid var(--bs-secondary);
+    border-top: 4px solid var(--bs-primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+} 

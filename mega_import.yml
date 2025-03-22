@@ -1,0 +1,52 @@
+name: MEGA Import
+description: Import files from MEGA.nz cloud storage
+version: 1.0.0
+url: https://github.com/stashapp/stash
+
+interface: js
+
+# UI configuration
+ui:
+  javascript:
+    - mega_import.jsx
+    - utils/format.js
+  css:
+    - mega_import.css
+  requires: []
+  assets:
+    /: assets
+  csp:
+    connect-src:
+      - "https://*.mega.nz"
+      - "https://mega.nz"
+
+# Plugin settings
+settings:
+  mega_email:
+    displayName: MEGA Email
+    description: Your MEGA.nz account email
+    type: STRING
+  mega_password:
+    displayName: MEGA Password
+    description: Your MEGA.nz account password
+    type: STRING
+  download_path:
+    displayName: Download Path
+    description: Path where files will be downloaded before import
+    type: STRING
+  allowed_extensions:
+    displayName: Allowed Extensions
+    description: Comma-separated list of file extensions to import (e.g. mp4,jpg,png)
+    type: STRING
+  delete_after_import:
+    displayName: Delete After Import
+    description: Delete downloaded files after successful import
+    type: BOOLEAN
+    default: true
+
+# Plugin tasks
+tasks:
+  - name: Import from MEGA
+    description: Import files from MEGA.nz cloud storage
+    exec:
+      - mega_import.js 
