@@ -1,5 +1,51 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
 .pytest_cache/
+
+# Plugin runtime output
 mega_imports/
+
+# Secrets & credentials — NEVER commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+id_ecdsa
+*_rsa
+*_ed25519
+known_hosts
+authorized_keys
+secrets/
+credentials*
+*.credentials.json
+
+# MEGAcmd local state (contains session tokens)
+.megaCmd/
+megacmd_*.log
+
+# IDE / OS
 .DS_Store
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+
+# Local-only deploy / homelab configs
+deploy.local.*
+*.local.yml
+*.local.yaml
+hosts.local
+inventory.local
+
+# Backup files
+*.bak
+*.orig
+*.rej
