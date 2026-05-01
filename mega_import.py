@@ -361,7 +361,11 @@ def _get_mega():
     token = _load_saved_token()
     if not token:
         raise MegaError("Not logged in — please log in first", code="not_logged_in")
-    sid, master_key = _token_to_session(token)
+    try:
+        sid, master_key = _token_to_session(token)
+    except MegaError:
+        # Corrupted or unreadable session file → treat as logged out.
+        raise MegaError("Not logged in — please log in first", code="not_logged_in")
     return _make_mega(sid, master_key)
 
 
