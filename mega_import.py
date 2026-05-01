@@ -5,6 +5,18 @@ MEGA Import Plugin — backend (mega.py edition).
 Replaces MEGAcmd with the mega.py library (pip install mega.py), which works
 on Alpine Linux containers and needs no native binaries.
 
+Hashcash PoW
+------------
+MEGA's API returns HTTP 402 when it wants the client to prove it is not a bot.
+The response carries an "X-Hashcash: 1:<easiness>:<ts>:<b64token>" header.
+The client must find a 4-byte nonce such that
+
+    SHA-256([nonce_be] + [token_bytes × 262144])[0:4] ≤ threshold(easiness)
+
+and retry the request with "X-Hashcash: 1:<token>:<solved_prefix_b64>".
+This module implements the solver in pure Python + hashlib (multithreaded,
+since hashlib releases the GIL for large updates).
+
 Protocol
 --------
 Reads one JSON document from stdin.
@@ -69,6 +81,215 @@ try:
     _u3conn.allowed_gai_family = lambda: _socket.AF_INET
 except Exception:
     pass  # urllib3 not yet installed — noop, mega.py import will fail later anyway
+
+# ---------------------------------------------------------------------------
+# MEGA base64 helpers.
+# MEGA uses a modified base64 alphabet: A-Za-z0-9 then '-' then '_'
+# (URL-safe variant, no padding characters).
+# ---------------------------------------------------------------------------
+_M64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+_M64_MAP = {c: i for i, c in enumerate(_M64)}
+_M64_MAP['+'] = 62   # accept standard base64 '+' as alias for '-'
+_M64_MAP['/'] = 63   # accept standard base64 '/' as alias for '_'
+
+
+def _mega_b64_decode(s: str) -> bytes:
+    """Decode MEGA base64 (A-Za-z0-9-_) to bytes.  No '=' padding required."""
+    s = s.rstrip("=")
+    result = bytearray()
+    acc, bits = 0, 0
+    for c in s:
+        v = _M64_MAP.get(c, -1)
+        if v < 0:
+            continue
+        acc = (acc << 6) | v
+        bits += 6
+        if bits >= 8:
+            bits -= 8
+            result.append((acc >> bits) & 0xFF)
+    return bytes(result)
+
+
+def _mega_b64_encode(b: bytes) -> str:
+    """Encode bytes to MEGA base64 (no '=' padding)."""
+    out, acc, bits = [], 0, 0
+    for byte in b:
+        acc = (acc << 8) | byte
+        bits += 8
+        while bits >= 6:
+            bits -= 6
+            out.append(_M64[(acc >> bits) & 63])
+    if bits:
+        out.append(_M64[(acc << (6 - bits)) & 63])
+    return "".join(out)
+
+
+# ---------------------------------------------------------------------------
+# MEGA Hashcash proof-of-work solver.
+#
+# When MEGA's API returns HTTP 402 it includes a response header:
+#   X-Hashcash: 1:<easiness>:<timestamp>:<b64token>
+#
+# The client must solve a SHA-256 PoW and retry with:
+#   X-Hashcash: 1:<b64token>:<solved_prefix_b64>
+#
+# Algorithm (from MEGA SDK src/hashcash.cpp):
+#   buffer = [4-byte nonce (big-endian)] + [token_bytes repeated 262144 times]
+#   Find nonce such that: struct.unpack('>I', sha256(buffer)[:4])[0] <= threshold
+#   threshold = (((easiness & 63) << 1) + 1) << ((easiness >> 6) * 7 + 3)
+# ---------------------------------------------------------------------------
+_HC_TOKEN_BYTES = 48
+_HC_REPEAT = 262144                              # 12 MB / 48 B
+_HC_BUF_SIZE = 4 + _HC_REPEAT * _HC_TOKEN_BYTES  # 12,582,916 bytes
+
+
+def _hc_threshold(easiness: int) -> int:
+    """Max allowed first 32-bit word (big-endian) of SHA-256 for the given easiness."""
+    return (((easiness & 63) << 1) + 1) << ((easiness >> 6) * 7 + 3)
+
+
+def _gencash(token_b64: str, easiness: int) -> str:
+    """
+    Solve MEGA's hashcash PoW.
+    Returns the 4-byte nonce encoded in MEGA base64.
+    Uses one thread per logical CPU core; hashlib releases the GIL so threads
+    run truly in parallel.
+    """
+    import hashlib
+    import struct
+    import threading
+
+    token_bin = _mega_b64_decode(token_b64)
+    if len(token_bin) != _HC_TOKEN_BYTES:
+        raise MegaError(
+            f"Hashcash token must be {_HC_TOKEN_BYTES} bytes, got {len(token_bin)}",
+            code="bad_hashcash",
+        )
+
+    # Build the 12 MB token area (index 0..3 is the nonce slot; 4.. is the
+    # token repeated 262144 times).  We only pre-build indices 4..end once.
+    token_area = bytearray(_HC_BUF_SIZE)
+    token_area[4 : 4 + _HC_TOKEN_BYTES] = token_bin
+    filled = _HC_TOKEN_BYTES
+    while filled < _HC_REPEAT * _HC_TOKEN_BYTES:
+        chunk = min(filled, _HC_REPEAT * _HC_TOKEN_BYTES - filled)
+        token_area[4 + filled : 4 + filled + chunk] = token_area[4 : 4 + filled]
+        filled += chunk
+
+    # Pre-slice the two fixed parts of every SHA-256 call:
+    #   block0 = [4B nonce] + block0_suffix  (exactly 64 bytes — one SHA-256 block)
+    #   tail   = everything from byte 64 onwards (constant for all nonces)
+    block0_suffix = bytes(token_area[4:64])  # 60 bytes
+    tail = bytes(token_area[64:])            # 12,582,852 bytes
+
+    threshold = _hc_threshold(easiness)
+    num_workers = min(os.cpu_count() or 1, 8)
+    stop = threading.Event()
+    result_holder: list = [None]
+    lock = threading.Lock()
+
+    def _worker(start: int) -> None:
+        n = start
+        while not stop.is_set():
+            nonce_bytes = struct.pack(">I", n & 0xFFFFFFFF)
+            h = hashlib.sha256()
+            h.update(nonce_bytes + block0_suffix)
+            h.update(tail)
+            first_word, = struct.unpack(">I", h.digest()[:4])
+            if first_word <= threshold:
+                with lock:
+                    if result_holder[0] is None:
+                        result_holder[0] = _mega_b64_encode(nonce_bytes)
+                stop.set()
+                return
+            n += num_workers
+            if n > 0xFFFFFFFF * num_workers:
+                stop.set()
+                return
+
+    threads = [
+        threading.Thread(target=_worker, args=(i,), daemon=True)
+        for i in range(num_workers)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    if result_holder[0] is None:
+        raise MegaError("Hashcash PoW: nonce space exhausted", code="hashcash_failed")
+    return result_holder[0]
+
+
+def _parse_hashcash_header(value: str):
+    """
+    Parse MEGA's X-Hashcash response header.
+    Expected format: 1:<easiness>:<timestamp>:<b64token>
+    Returns (token_b64, easiness) or None on failure.
+    """
+    parts = value.strip().split(":")
+    if len(parts) != 4 or parts[0] != "1":
+        return None
+    try:
+        easiness = int(parts[1])
+        if not 0 <= easiness <= 255:
+            return None
+    except ValueError:
+        return None
+    token = parts[3]
+    if len(token) != 64:
+        return None
+    return token, easiness
+
+
+# ---------------------------------------------------------------------------
+# Patch requests.Session.request to handle MEGA's HTTP 402 / Hashcash PoW.
+# When MEGA returns 402 it expects the client to solve a proof-of-work and
+# retry the *exact same* request with the solution in an X-Hashcash header.
+# The patch is skipped gracefully if requests is not installed (e.g. during
+# local unit tests that mock all network calls).
+# ---------------------------------------------------------------------------
+try:
+    import requests as _requests
+    _orig_session_request = _requests.Session.request
+except ImportError:
+    _requests = None  # type: ignore[assignment]
+    _orig_session_request = None
+
+
+def _session_request_with_hashcash(self, method, url, **kwargs):
+    """Transparently handle MEGA's HTTP 402 Hashcash challenge-response."""
+    resp = _orig_session_request(self, method, url, **kwargs)
+
+    if resp.status_code == 402 and (
+        "mega.co.nz" in str(url) or "mega.nz" in str(url)
+    ):
+        hc_val = resp.headers.get("X-Hashcash") or resp.headers.get("x-hashcash") or ""
+        parsed = _parse_hashcash_header(hc_val)
+        if parsed:
+            token_b64, easiness = parsed
+            print(
+                f"[mega-import] Hashcash challenge received (easiness={easiness}), solving…",
+                file=sys.stderr,
+            )
+            try:
+                prefix_b64 = _gencash(token_b64, easiness)
+                retry_headers = dict(kwargs.get("headers") or {})
+                retry_headers["X-Hashcash"] = f"1:{token_b64}:{prefix_b64}"
+                retry_kwargs = {**kwargs, "headers": retry_headers}
+                resp = _orig_session_request(self, method, url, **retry_kwargs)
+                print(
+                    f"[mega-import] Hashcash retry → HTTP {resp.status_code}",
+                    file=sys.stderr,
+                )
+            except Exception as e:
+                print(f"[mega-import] Hashcash PoW error: {e}", file=sys.stderr)
+
+    return resp
+
+
+if _requests is not None:
+    _requests.Session.request = _session_request_with_hashcash
 
 SESSION_FILE = Path(os.environ.get("MEGA_SESSION_FILE", "/tmp/.mega_session.json"))
 DEFAULT_DEST = os.environ.get("MEGA_IMPORT_DEST", "mega_imports")

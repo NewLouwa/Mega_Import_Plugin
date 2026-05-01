@@ -8,8 +8,10 @@ No MEGAcmd, no Stash, no network required — mega.py calls are mocked.
 """
 
 import base64
+import hashlib
 import io
 import json
+import struct
 import sys
 import tempfile
 import unittest
@@ -348,6 +350,132 @@ class ActionFindTests(unittest.TestCase):
             # readme.txt is at root, search inside /Movies
             result = mega_import.action_find({"query": "readme", "path": "/Movies"})
         self.assertEqual([], result)
+
+
+# ---------------------------------------------------------------------------
+# Hashcash helpers
+# ---------------------------------------------------------------------------
+
+class MegaBase64Tests(unittest.TestCase):
+    def test_encode_decode_roundtrip(self):
+        import mega_import
+        for b in [b"", b"\x00", b"\xff" * 4, bytes(range(48))]:
+            encoded = mega_import._mega_b64_encode(b)
+            decoded = mega_import._mega_b64_decode(encoded)
+            self.assertEqual(b, decoded)
+
+    def test_no_padding_in_output(self):
+        import mega_import
+        enc = mega_import._mega_b64_encode(b"\x00\x00\x00")  # 4 chars, no =
+        self.assertNotIn("=", enc)
+
+    def test_uses_mega_alphabet(self):
+        import mega_import
+        # all output chars must be in A-Za-z0-9-_
+        enc = mega_import._mega_b64_encode(bytes(range(256)))
+        allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+        self.assertTrue(all(c in allowed for c in enc))
+
+    def test_accepts_standard_base64_chars(self):
+        """Decode must treat + as - and / as _ (lenient)."""
+        import mega_import
+        # encode with standard base64 then swap chars and decode with mega
+        b = bytes(range(48))
+        std = base64.b64encode(b).decode().rstrip("=").replace("+", "-").replace("/", "_")
+        # decode the MEGA-alphabet version and also the standard chars
+        out_mega = mega_import._mega_b64_decode(std)
+        out_std  = mega_import._mega_b64_decode(
+            std.replace("-", "+").replace("_", "/")
+        )
+        self.assertEqual(out_mega, out_std)
+
+
+class HashcashThresholdTests(unittest.TestCase):
+    def test_known_values(self):
+        import mega_import
+        # From SDK: threshold(e) = (((e&63)<<1)+1) << ((e>>6)*7+3)
+        for e, expected in [(0, 8), (1, 24), (63, 1016), (100, 74752), (200, 285212672)]:
+            self.assertEqual(expected, mega_import._hc_threshold(e),
+                             msg=f"threshold({e})")
+
+
+class HashcashParseHeaderTests(unittest.TestCase):
+    def test_valid_header(self):
+        import mega_import
+        token = "A" * 64
+        val = f"1:100:1731410499:{token}"
+        result = mega_import._parse_hashcash_header(val)
+        self.assertIsNotNone(result)
+        tok, ease = result
+        self.assertEqual(token, tok)
+        self.assertEqual(100, ease)
+
+    def test_wrong_version_rejected(self):
+        import mega_import
+        self.assertIsNone(mega_import._parse_hashcash_header(f"2:100:123:{'A'*64}"))
+
+    def test_wrong_token_length_rejected(self):
+        import mega_import
+        self.assertIsNone(mega_import._parse_hashcash_header(f"1:100:123:{'A'*63}"))
+
+    def test_bad_easiness_rejected(self):
+        import mega_import
+        self.assertIsNone(mega_import._parse_hashcash_header(f"1:256:123:{'A'*64}"))
+
+
+class GencashTests(unittest.TestCase):
+    """Test the proof-of-work solver with a high easiness (trivial difficulty)."""
+
+    @staticmethod
+    def _make_token_b64() -> str:
+        """Return a valid 48-byte MEGA-base64 token."""
+        import mega_import
+        return mega_import._mega_b64_encode(bytes(range(48)))
+
+    def test_returns_valid_prefix(self):
+        """gencash with easiness=255 (easiest) must return a valid 4-byte prefix."""
+        import mega_import
+        token_b64 = self._make_token_b64()
+        prefix_b64 = mega_import._gencash(token_b64, easiness=255)
+        # Must decode to exactly 4 bytes
+        prefix_bytes = mega_import._mega_b64_decode(prefix_b64)
+        self.assertEqual(4, len(prefix_bytes))
+
+    def test_prefix_satisfies_threshold(self):
+        """The returned prefix must genuinely satisfy SHA-256 ≤ threshold(easiness)."""
+        import mega_import
+        token_b64 = self._make_token_b64()
+        token_bin = mega_import._mega_b64_decode(token_b64)
+        easiness = 255
+
+        prefix_b64 = mega_import._gencash(token_b64, easiness=easiness)
+        prefix_bytes = mega_import._mega_b64_decode(prefix_b64)
+
+        # Rebuild the buffer exactly as the SDK does
+        BUF_SIZE = 4 + 262144 * 48
+        buf = bytearray(BUF_SIZE)
+        buf[0:4] = prefix_bytes
+        buf[4:4 + 48] = token_bin
+        filled = 48
+        while filled < 262144 * 48:
+            chunk = min(filled, 262144 * 48 - filled)
+            buf[4 + filled : 4 + filled + chunk] = buf[4 : 4 + filled]
+            filled += chunk
+
+        digest = hashlib.sha256(bytes(buf)).digest()
+        first_word, = struct.unpack(">I", digest[:4])
+        threshold = mega_import._hc_threshold(easiness)
+        self.assertLessEqual(first_word, threshold,
+            msg=f"first_word={first_word:#010x} > threshold={threshold:#010x}")
+
+    def test_bad_token_raises(self):
+        import mega_import
+        from mega_import import MegaError
+        # token that decodes to wrong number of bytes
+        short_token = mega_import._mega_b64_encode(b"\x00" * 10)  # 10 bytes, not 48
+        with self.assertRaises(MegaError) as cm:
+            mega_import._gencash(short_token, easiness=255)
+        self.assertEqual("bad_hashcash", cm.exception.code)
 
 
 # ---------------------------------------------------------------------------
