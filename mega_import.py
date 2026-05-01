@@ -57,6 +57,19 @@ import asyncio as _asyncio
 if not hasattr(_asyncio, "coroutine"):
     _asyncio.coroutine = lambda f: f
 
+# ---------------------------------------------------------------------------
+# Force IPv4 for all requests/urllib3 calls.
+# Many Docker/container setups have no IPv6 routing: DNS resolves MEGA's API
+# to IPv6 first, the TCP connect hangs (no RST, just silence), and the login
+# blocks for 120 s before timing out.  Forcing AF_INET bypasses that.
+# ---------------------------------------------------------------------------
+import socket as _socket
+try:
+    import urllib3.util.connection as _u3conn
+    _u3conn.allowed_gai_family = lambda: _socket.AF_INET
+except Exception:
+    pass  # urllib3 not yet installed — noop, mega.py import will fail later anyway
+
 SESSION_FILE = Path(os.environ.get("MEGA_SESSION_FILE", "/tmp/.mega_session.json"))
 DEFAULT_DEST = os.environ.get("MEGA_IMPORT_DEST", "mega_imports")
 
