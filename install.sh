@@ -82,14 +82,30 @@ check_prereqs_remote() {
 
 # 3. Run Python smoke test locally before deploying.
 run_smoke_tests() {
-  blue "Running Python unit tests…"
-  if command -v python3 >/dev/null; then PY=python3; else PY=python; fi
+  blue "Running Python unit tests..."
+  if [[ -n "${PYTHON:-}" ]]; then
+    PY="$PYTHON"
+  else
+    PY=""
+    for cand in python3 python; do
+      if command -v "$cand" >/dev/null 2>&1; then
+        # Skip Windows Store stub: real interpreters reply to --version.
+        if "$cand" --version >/dev/null 2>&1; then
+          PY="$cand"; break
+        fi
+      fi
+    done
+  fi
+  if [[ -z "$PY" ]]; then
+    red "No working Python interpreter found. Set PYTHON=/path/to/python or install python3."
+    exit 1
+  fi
   if ! "$PY" -m unittest test_mega_import >/dev/null 2>&1; then
     red "Python tests failed. Aborting install."
     "$PY" -m unittest test_mega_import
     exit 1
   fi
-  green "Tests passed."
+  green "Tests passed (using $PY)."
 }
 
 # 4. Local install.
