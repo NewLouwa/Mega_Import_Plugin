@@ -114,15 +114,14 @@
     return [value, setAndPersist];
   };
 
-  // Bridge constants
-  const RUN_TASK = gql`
-    mutation MegaImport_RunTask($id: ID!, $name: String!, $args: Map) {
-      runPluginTask(plugin_id: $id, task_name: $name, args_map: $args)
-    }
-  `;
-  const FIND_JOB = gql`
-    query MegaImport_FindJob($id: ID!) {
-      findJob(input: { id: $id }) { id status error description }
+  // Bridge constants — uses runPluginOperation (Stash v0.25+) which is
+  // synchronous: no job queue, no polling. The Python "output" value comes
+  // back directly in data.runPluginOperation; Python "error" becomes a
+  // GraphQL error. Replaces the old runPluginTask+findJob+job.error hack
+  // which was broken in Stash v0.31.
+  const RUN_OPERATION = gql`
+    mutation MegaImport_RunOp($id: ID!, $args: Map!) {
+      runPluginOperation(plugin_id: $id, args: $args)
     }
   `;
   const METADATA_SCAN = gql`
@@ -130,8 +129,6 @@
       metadataScan(input: $input)
     }
   `;
-  const POLL_INTERVAL_MS = 250;
-  const POLL_TIMEOUT_MS = 5 * 60 * 1000;
 
   const megaLogoSVG = '<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="20" height="20" viewBox="0 0 361.4 361.4"><path fill="#d9272e" d="M180.7 0C80.9 0 0 80.9 0 180.7c0 99.8 80.9 180.7 180.7 180.7 99.8 0 180.7-80.9 180.7-180.7C361.4 80.9 280.5 0 180.7 0Zm93.8 244.6c0 3.1-2.5 5.6-5.6 5.6h-23.6c-3.1 0-5.6-2.5-5.6-5.6v-72.7c0-.6-.7-.9-1.2-.5l-50 50c-4.3 4.3-11.4 4.3-15.7 0l-50-50c-.4-.4-1.2-.1-1.2.5v72.7c0 3.1-2.5 5.6-5.6 5.6H92.4c-3.1 0-5.6-2.5-5.6-5.6V116.8c0-3.1 2.5-5.6 5.6-5.6h16.2c2.9 0 5.8 1.2 7.9 3.3l62.2 62.2c1.1 1.1 2.8 1.1 3.9 0l62.2-62.2c2.1-2.1 4.9-3.3 7.9-3.3h16.2c3.1 0 5.6 2.5 5.6 5.6v127.8z"/></svg>';
   const megaLogoSVGLarge = '<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="30" height="30" viewBox="0 0 361.4 361.4"><path fill="#d9272e" d="M180.7 0C80.9 0 0 80.9 0 180.7c0 99.8 80.9 180.7 180.7 180.7 99.8 0 180.7-80.9 180.7-180.7C361.4 80.9 280.5 0 180.7 0Zm93.8 244.6c0 3.1-2.5 5.6-5.6 5.6h-23.6c-3.1 0-5.6-2.5-5.6-5.6v-72.7c0-.6-.7-.9-1.2-.5l-50 50c-4.3 4.3-11.4 4.3-15.7 0l-50-50c-.4-.4-1.2-.1-1.2.5v72.7c0 3.1-2.5 5.6-5.6 5.6H92.4c-3.1 0-5.6-2.5-5.6-5.6V116.8c0-3.1 2.5-5.6 5.6-5.6h16.2c2.9 0 5.8 1.2 7.9 3.3l62.2 62.2c1.1 1.1 2.8 1.1 3.9 0l62.2-62.2c2.1-2.1 4.9-3.3 7.9-3.3h16.2c3.1 0 5.6 2.5 5.6 5.6v127.8z"/></svg>';
@@ -191,12 +188,12 @@
 
     _setApolloClient(client) { this._client = client; },
 
-    // Run a backend action via Stash's plugin task system. Polls the job until
-    // it finishes, then decodes the OK:/ERR: prefix Python wrote into Job.error.
+    // Run a backend action via runPluginOperation (Stash v0.25+).
+    // Synchronous: one GraphQL round-trip, no polling.
+    // Python "output" → resolved value; Python "error" → GraphQL error → rejected promise.
     async _runTask(action, args) {
       // ApolloCapture sets _client in a useEffect; on a direct reload to
-      // /mega-browser, the browser page can mount before that fires. Give it
-      // a brief grace period.
+      // /mega-browser the page can mount before that fires. Short grace period.
       const waitDeadline = Date.now() + 3000;
       while (!this._client && Date.now() < waitDeadline) {
         await new Promise(r => setTimeout(r, 50));
@@ -205,54 +202,31 @@
         throw new Error("Apollo client not initialized — plugin not fully loaded");
       }
       const argsMap = Object.assign({ action }, args || {});
-      let jobId;
       try {
-        const startResp = await this._client.mutate({
-          mutation: RUN_TASK,
-          variables: { id: PLUGIN_ID, name: TASK_NAME, args: argsMap },
+        const resp = await this._client.mutate({
+          mutation: RUN_OPERATION,
+          variables: { id: PLUGIN_ID, args: argsMap },
         });
-        jobId = startResp && startResp.data && startResp.data.runPluginTask;
+        return resp && resp.data && resp.data.runPluginOperation;
       } catch (e) {
-        logError("runPluginTask", e, { action });
-        throw new Error("Failed to start MEGA task: " + (e.message || e));
+        // GraphQL errors from Python's {"error": "..."} land here.
+        const msg = (e.graphQLErrors && e.graphQLErrors[0] && e.graphQLErrors[0].message)
+          || e.message || String(e);
+        logError("runPluginOperation", e, { action });
+        throw new Error(msg);
       }
-      if (!jobId) throw new Error("runPluginTask returned no job id");
-
-      const deadline = Date.now() + POLL_TIMEOUT_MS;
-      // Poll. (Subscriptions would be cleaner but polling is simpler and fine
-      // for the latencies we care about; first poll happens after one interval.)
-      while (Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
-        let job;
-        try {
-          const r = await this._client.query({
-            query: FIND_JOB,
-            variables: { id: jobId },
-            fetchPolicy: "no-cache",
-          });
-          job = r && r.data && r.data.findJob;
-        } catch (e) {
-          logError("findJob", e, { jobId, action });
-          throw new Error("Failed to read job status: " + (e.message || e));
-        }
-        if (!job) {
-          // Stash drops jobs from its queue once they finish — if we missed the
-          // window, treat as completion-without-result. Surface as a clear error.
-          throw new Error("Job " + jobId + " disappeared before result was read");
-        }
-        if (job.status === "FINISHED" || job.status === "FAILED" || job.status === "CANCELLED") {
-          return decodeJobResult(job, action);
-        }
-      }
-      throw new Error("MEGA task '" + action + "' timed out");
     },
 
-    async login(email, password, rememberMe) {
+    async login(email, password) {
       const result = await this._runTask("login", { email, password });
-      this._session = {
-        email: result.email,
-        rememberMe: !!rememberMe,
-      };
+      this._session = { email: result.email, sessionToken: result.session_token || null };
+      this._emitSessionChange();
+      return this._session;
+    },
+
+    async loginWithToken(sessionToken) {
+      const result = await this._runTask("login", { session_token: sessionToken });
+      this._session = { email: result.email, sessionToken: result.session_token || sessionToken };
       this._emitSessionChange();
       return this._session;
     },
@@ -363,27 +337,6 @@
 
   MegaApiClient._hydrateSession();
 
-  // Decode Python's OK:<json> / ERR:<msg> envelope from Job.error.
-  const decodeJobResult = (job, action) => {
-    const err = job.error || "";
-    if (err.startsWith("OK:")) {
-      try { return JSON.parse(err.slice(3)); }
-      catch (e) {
-        logError("decode OK", e, { action, error_preview: err.slice(0, 200) });
-        throw new Error("Backend returned malformed OK payload");
-      }
-    }
-    if (err.startsWith("ERR:")) {
-      throw new Error(err.slice(4));
-    }
-    if (job.status === "FAILED" || job.status === "CANCELLED") {
-      throw new Error("MEGA task " + job.status.toLowerCase() + ": " + (err || "no detail"));
-    }
-    // Job finished but Job.error has neither prefix — Python likely crashed
-    // before printing the envelope. Surface what we have.
-    throw new Error("Backend returned unrecognized output: " + (err.slice(0, 200) || "(empty)"));
-  };
-
   // Captures the Apollo client into MegaApiClient so non-React code can run
   // queries. Mounted inside NavbarPlugin.
   const ApolloCapture = () => {
@@ -420,20 +373,20 @@
     });
   };
 
-  // LoginModal — login form only. No tabs.
+  // LoginModal — two modes: email/password or session token (API key).
   const LoginModal = ({ show, onClose, onLoggedIn }) => {
+    const [mode, setMode] = React.useState("credentials"); // "credentials" | "token"
     const [email, setEmail] = React.useState("");
     const [password, setPassword] = React.useState("");
-    const [rememberMe, setRememberMe] = React.useState(false);
+    const [tokenInput, setTokenInput] = React.useState("");
     const [isLoading, setIsLoading] = React.useState(false);
     const [errorMsg, setErrorMsg] = React.useState(null);
+    const [savedToken, setSavedToken] = React.useState(null); // shown after creds login
     const toast = api.hooks.useToast();
 
     const reset = () => {
-      setEmail("");
-      setPassword("");
-      setRememberMe(false);
-      setErrorMsg(null);
+      setEmail(""); setPassword(""); setTokenInput("");
+      setErrorMsg(null); setSavedToken(null);
     };
 
     const handleClose = () => {
@@ -442,28 +395,76 @@
       onClose();
     };
 
-    const handleSubmit = async (e) => {
+    const handleSubmitCredentials = async (e) => {
       if (e && e.preventDefault) e.preventDefault();
-      if (!email || !password) {
-        setErrorMsg("Please enter your email and password.");
-        return;
-      }
-      setIsLoading(true);
-      setErrorMsg(null);
+      if (!email || !password) { setErrorMsg("Enter your email and password."); return; }
+      setIsLoading(true); setErrorMsg(null);
       try {
-        await MegaApiClient.login(email, password, rememberMe);
+        const session = await MegaApiClient.login(email, password);
+        // Show the token for the user to copy before navigating away.
+        if (session.sessionToken) { setSavedToken(session.sessionToken); return; }
         toast.success("Logged in to MEGA");
-        reset();
-        onClose();
-        onLoggedIn();
-      } catch (error) {
-        const msg = (error && error.message) || "Unknown error";
-        setErrorMsg(`Login failed: ${msg}`);
-        toast.error(`MEGA login failed: ${msg}`);
-      } finally {
-        setIsLoading(false);
-      }
+        reset(); onClose(); onLoggedIn();
+      } catch (err) {
+        const msg = (err && err.message) || "Unknown error";
+        setErrorMsg("Login failed: " + msg);
+        toast.error("MEGA login failed: " + msg);
+      } finally { setIsLoading(false); }
     };
+
+    const handleSubmitToken = async (e) => {
+      if (e && e.preventDefault) e.preventDefault();
+      const t = tokenInput.trim();
+      if (!t) { setErrorMsg("Paste your session token."); return; }
+      setIsLoading(true); setErrorMsg(null);
+      try {
+        await MegaApiClient.loginWithToken(t);
+        toast.success("Logged in to MEGA");
+        reset(); onClose(); onLoggedIn();
+      } catch (err) {
+        const msg = (err && err.message) || "Unknown error";
+        setErrorMsg("Token rejected: " + msg);
+        toast.error("MEGA token login failed: " + msg);
+      } finally { setIsLoading(false); }
+    };
+
+    const handleContinueAfterToken = () => {
+      reset(); onClose(); onLoggedIn();
+    };
+
+    // Token display after successful credentials login
+    if (savedToken) {
+      return React.createElement(
+        Modal,
+        { show, onHide: handleClose, size: "md" },
+        React.createElement(Modal.Header, { closeButton: true },
+          React.createElement("div", { className: "modal-title-with-logo" },
+            React.createElement("span", { dangerouslySetInnerHTML: { __html: megaLogoSVGLarge }, className: "mega-logo-header" }),
+            React.createElement(Modal.Title, null, "Logged in!")
+          )
+        ),
+        React.createElement(Modal.Body, null,
+          React.createElement(Alert, { variant: "success" }, "✓ Logged in to MEGA successfully."),
+          React.createElement("p", { className: "small text-muted mb-1" },
+            "Save this session token to log in next time without your password:"
+          ),
+          React.createElement(Form.Control, {
+            as: "textarea", rows: 3, readOnly: true,
+            value: savedToken,
+            className: "mb-2 font-monospace small",
+            onClick: (e) => e.target.select(),
+          }),
+          React.createElement("small", { className: "text-muted" },
+            "Click the token to select it, then copy. Keep it secret — it grants full MEGA access."
+          )
+        ),
+        React.createElement(Modal.Footer, null,
+          React.createElement(Button, { variant: "primary", onClick: handleContinueAfterToken },
+            "Continue to MEGA Browser"
+          )
+        )
+      );
+    }
 
     return React.createElement(
       Modal,
@@ -484,61 +485,76 @@
       React.createElement(
         Modal.Body,
         null,
-        errorMsg && React.createElement(Alert, { variant: "danger" }, errorMsg),
+        // Mode toggle
         React.createElement(
-          Form,
-          { onSubmit: handleSubmit },
-          React.createElement(
-            Form.Group,
-            { className: "mb-3" },
-            React.createElement(Form.Label, null, "Email"),
-            React.createElement(Form.Control, {
-              type: "email",
-              value: email,
-              onChange: (e) => setEmail(e.target.value),
-              placeholder: "your@email.com",
-              disabled: isLoading,
-              autoFocus: true,
-            })
-          ),
-          React.createElement(
-            Form.Group,
-            { className: "mb-3" },
-            React.createElement(Form.Label, null, "Password"),
-            React.createElement(Form.Control, {
-              type: "password",
-              value: password,
-              onChange: (e) => setPassword(e.target.value),
-              placeholder: "Enter your MEGA password",
-              disabled: isLoading,
-            })
-          ),
-          React.createElement(
-            Form.Group,
-            { className: "mb-3" },
-            React.createElement(Form.Check, {
-              type: "checkbox",
-              label: "Remember me",
-              checked: rememberMe,
-              onChange: (e) => setRememberMe(e.target.checked),
-              disabled: isLoading,
-            })
-          ),
-          // Hidden submit so Enter works in the form.
-          React.createElement("button", { type: "submit", style: { display: "none" } })
-        )
+          "div",
+          { className: "d-flex gap-2 mb-3" },
+          React.createElement(Button, {
+            variant: mode === "credentials" ? "primary" : "outline-secondary",
+            size: "sm",
+            onClick: () => { setMode("credentials"); setErrorMsg(null); },
+            disabled: isLoading,
+          }, "Email / Password"),
+          React.createElement(Button, {
+            variant: mode === "token" ? "primary" : "outline-secondary",
+            size: "sm",
+            onClick: () => { setMode("token"); setErrorMsg(null); },
+            disabled: isLoading,
+          }, "Session Token")
+        ),
+        errorMsg && React.createElement(Alert, { variant: "danger" }, errorMsg),
+        mode === "credentials"
+          ? React.createElement(
+              Form,
+              { onSubmit: handleSubmitCredentials },
+              React.createElement(Form.Group, { className: "mb-3" },
+                React.createElement(Form.Label, null, "Email"),
+                React.createElement(Form.Control, {
+                  type: "email", value: email,
+                  onChange: (e) => setEmail(e.target.value),
+                  placeholder: "your@email.com", disabled: isLoading, autoFocus: true,
+                })
+              ),
+              React.createElement(Form.Group, { className: "mb-3" },
+                React.createElement(Form.Label, null, "Password"),
+                React.createElement(Form.Control, {
+                  type: "password", value: password,
+                  onChange: (e) => setPassword(e.target.value),
+                  placeholder: "MEGA password", disabled: isLoading,
+                })
+              ),
+              React.createElement("button", { type: "submit", style: { display: "none" } })
+            )
+          : React.createElement(
+              Form,
+              { onSubmit: handleSubmitToken },
+              React.createElement(Form.Group, { className: "mb-2" },
+                React.createElement(Form.Label, null, "Session Token"),
+                React.createElement(Form.Control, {
+                  as: "textarea", rows: 3, value: tokenInput,
+                  onChange: (e) => setTokenInput(e.target.value),
+                  placeholder: "Paste the session token obtained after a previous login…",
+                  disabled: isLoading, autoFocus: true,
+                  className: "font-monospace small",
+                })
+              ),
+              React.createElement("small", { className: "text-muted" },
+                "A session token is shown once after email/password login."
+              ),
+              React.createElement("button", { type: "submit", style: { display: "none" } })
+            )
       ),
       React.createElement(
         Modal.Footer,
         null,
+        React.createElement(Button, { variant: "secondary", onClick: handleClose, disabled: isLoading }, "Cancel"),
         React.createElement(
           Button,
-          { variant: "secondary", onClick: handleClose, disabled: isLoading },
-          "Cancel"
-        ),
-        React.createElement(
-          Button,
-          { variant: "primary", onClick: handleSubmit, disabled: isLoading },
+          {
+            variant: "primary",
+            onClick: mode === "credentials" ? handleSubmitCredentials : handleSubmitToken,
+            disabled: isLoading,
+          },
           isLoading
             ? [React.createElement(Icon, { icon: faSpinner, spin: true, key: "i" }), " Signing in…"]
             : [React.createElement(Icon, { icon: faSignInAlt, key: "i" }), " Sign in"]

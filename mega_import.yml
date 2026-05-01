@@ -1,6 +1,6 @@
 name: MEGA Import
 description: Import files from MEGA.nz directly into Stash via MEGAcmd
-version: 0.7.0
+version: 0.8.0
 ui:
   javascript:
     - mega_import.js

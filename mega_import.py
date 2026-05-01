@@ -1,62 +1,55 @@
 #!/usr/bin/env python3
 """
-MEGA Import Plugin — backend.
+MEGA Import Plugin — backend (mega.py edition).
 
-Wraps MEGAcmd (https://github.com/meganz/MEGAcmd) as a subprocess so the JS
-frontend can drive auth/list/download against MEGA.nz from a Stash plugin task.
+Replaces MEGAcmd with the mega.py library (pip install mega.py), which works
+on Alpine Linux containers and needs no native binaries.
 
 Protocol
 --------
-Reads a single JSON document from stdin. Two accepted shapes:
+Reads one JSON document from stdin.
 
-  Standalone:
+  Standalone (testing):
     {"action": "list", "path": "/"}
 
-  From Stash (plugin task wraps args in "args"):
+  From Stash (plugin task wraps args):
     {"args": {"action": "list", "path": "/"}, "server_connection": {...}}
 
-Writes a single JSON document to stdout. Two output modes, auto-selected:
+Always writes {"output": <result|null>, "error": <null|"message">} to stdout.
+This format works with Stash's runPluginOperation (v0.25+): Stash returns
+output.output directly to the JS caller and turns output.error into a
+GraphQL error.
 
-  Standalone (input had no "args" key):
-    Success:  {"ok": true,  "result": <action-specific>}
-    Failure:  {"ok": false, "error": "<message>", "code": "<short_code>"}
-
-  Stash plugin task (input had "args" key — Stash wraps it):
-    Always:   {"output": null, "error": "OK:<json_result>" | "ERR:<message>"}
-
-  The Stash envelope abuses Job.error as a transport because Stash's GraphQL
-  doesn't expose plugin task stdout to the frontend. The JS bridge strips the
-  OK:/ERR: prefix.
+Session persistence
+-------------------
+The Python process is spawned fresh for every plugin call.  We persist the
+MEGA session (SID + master-key) in a temp file so repeated calls don't need
+to re-authenticate.  The session_token returned by `login` is a base64 JSON
+blob of those same fields — the JS can store it in sessionStorage and pass it
+back to authenticate without a password.
 
 Actions
 -------
-  check                       -> {"version": "..."}
-  whoami                      -> {"email": "..."} or {"email": null}
-  login   {email, password}   -> {"email": "..."}
-  logout                      -> {}
-  list    {path}              -> [{type, name, size, path}]
-  find    {query, path?}      -> [{type, name, path}]   (file-only matches)
-  download {paths, dest?}     -> {dest, items: [{path, status, error?}]}
-                               (paths may include folders — MEGAcmd downloads
-                               them recursively)
-
-Requirements
-------------
-MEGAcmd installed and `mega-login`, `mega-whoami`, `mega-ls`, `mega-logout`,
-`mega-get` on PATH. Windows install path is usually
-`C:\\Users\\<you>\\AppData\\Local\\MEGAcmd\\` — add it to PATH.
+  check                              -> {"version": "mega.py X.Y.Z"}
+  whoami                             -> {"email": "…"} | {"email": null}
+  login  {email, password}           -> {"email": "…", "session_token": "…"}
+  login  {session_token}             -> {"email": "…", "session_token": "…"}
+  logout                             -> {}
+  list   {path}                      -> [{type, name, size, path}, …]
+  find   {query, path?}              -> [{type, name, path}, …]
+  download {paths, dest?}            -> {dest, items: [{path, status, error?}]}
 """
 
+import base64
+import fnmatch
 import json
 import os
-import re
-import shutil
-import subprocess
+import random
 import sys
 from pathlib import Path
 
+SESSION_FILE = Path(os.environ.get("MEGA_SESSION_FILE", "/tmp/.mega_session.json"))
 DEFAULT_DEST = os.environ.get("MEGA_IMPORT_DEST", "mega_imports")
-MEGACMD_TIMEOUT_S = int(os.environ.get("MEGA_IMPORT_TIMEOUT", "300"))
 
 
 class MegaError(Exception):
@@ -65,171 +58,264 @@ class MegaError(Exception):
         self.code = code
 
 
-def _find_cmd(name):
-    """Locate a mega-* binary on PATH or in known Windows install dirs."""
-    found = shutil.which(name)
-    if found:
-        return found
-    if sys.platform == "win32":
-        candidates = [
-            Path(os.environ.get("LOCALAPPDATA", "")) / "MEGAcmd" / f"{name}.bat",
-            Path(os.environ.get("PROGRAMFILES", "")) / "MEGAcmd" / f"{name}.bat",
-        ]
-        for c in candidates:
-            if c.exists():
-                return str(c)
-    raise MegaError(
-        f"MEGAcmd command '{name}' not found on PATH. Install MEGAcmd from "
-        "https://mega.nz/cmd and ensure its install directory is on PATH.",
-        code="megacmd_missing",
-    )
+# ---------------------------------------------------------------------------
+# Session management — persist SID + master-key across subprocess calls.
+# ---------------------------------------------------------------------------
+
+def _session_to_token(sid, master_key):
+    """Encode session credentials as a portable base64 token string."""
+    data = {"sid": sid, "mk": list(master_key) if master_key else []}
+    return base64.b64encode(json.dumps(data, separators=(",", ":")).encode()).decode()
 
 
-def _run(args, input_text=None):
-    """Run a MEGAcmd binary, return (stdout, stderr, returncode)."""
-    binary = _find_cmd(args[0])
-    full = [binary] + list(args[1:])
+def _token_to_session(token):
+    """Decode a session token back to (sid, master_key_bytes)."""
     try:
-        proc = subprocess.run(
-            full,
-            input=input_text,
-            capture_output=True,
-            text=True,
-            timeout=MEGACMD_TIMEOUT_S,
-        )
-    except subprocess.TimeoutExpired:
-        raise MegaError(f"`{args[0]}` timed out after {MEGACMD_TIMEOUT_S}s", code="timeout")
-    return proc.stdout, proc.stderr, proc.returncode
+        data = json.loads(base64.b64decode(token.encode()).decode())
+        sid = data.get("sid") or ""
+        mk_list = data.get("mk") or []
+        if not sid:
+            raise ValueError("empty sid")
+        return sid, bytes(mk_list) if mk_list else None
+    except Exception as e:
+        raise MegaError(f"Invalid session token: {e}", code="bad_token")
 
 
-# -- actions ----------------------------------------------------------------
+def _save_session(sid, master_key):
+    """Persist session to temp file. Returns the session token string."""
+    token = _session_to_token(sid, master_key)
+    try:
+        SESSION_FILE.write_text(json.dumps({"token": token}))
+        SESSION_FILE.chmod(0o600)
+    except Exception:
+        pass
+    return token
+
+
+def _load_saved_token():
+    """Load persisted session token from temp file, or None."""
+    try:
+        if SESSION_FILE.exists():
+            data = json.loads(SESSION_FILE.read_text())
+            return data.get("token")
+    except Exception:
+        pass
+    return None
+
+
+def _make_mega(sid, master_key):
+    """Create a Mega() instance from existing session credentials (no login)."""
+    from mega import Mega
+    m = Mega()
+    m.sid = sid
+    m.master_key = master_key
+    m.sequence_num = random.randint(0, 0xFFFFFF)
+    return m
+
+
+def _get_mega():
+    """Return an authenticated Mega instance from the saved session."""
+    token = _load_saved_token()
+    if not token:
+        raise MegaError("Not logged in — please log in first", code="not_logged_in")
+    sid, master_key = _token_to_session(token)
+    return _make_mega(sid, master_key)
+
+
+# ---------------------------------------------------------------------------
+# File-tree helpers.
+# mega.py returns a flat {node_id: node} dict; we resolve paths by walking
+# the parent chain.
+# ---------------------------------------------------------------------------
+
+def _node_path(node_id, files, cache):
+    """Return the full '/' path for a node, walking the parent chain."""
+    if node_id in cache:
+        return cache[node_id]
+    node = files.get(node_id)
+    if node is None:
+        cache[node_id] = "/"
+        return "/"
+    t = node.get("t", 0)
+    if t == 2:                    # cloud drive root
+        cache[node_id] = "/"
+        return "/"
+    if t in (3, 4):               # inbox / trash
+        p = f"/_system_{t}"
+        cache[node_id] = p
+        return p
+    name = (node.get("a") or {}).get("n", "?")
+    parent_id = node.get("p")
+    parent_path = _node_path(parent_id, files, cache) if parent_id else "/"
+    full = ("/" + name) if parent_path == "/" else (parent_path + "/" + name)
+    cache[node_id] = full
+    return full
+
+
+def _get_root_id(files):
+    for nid, n in files.items():
+        if n.get("t") == 2:
+            return nid
+    raise MegaError("Could not locate MEGA cloud-drive root", code="no_root")
+
+
+def _find_by_path(files, path):
+    """Return (node_id, node) for the given path, or raise MegaError."""
+    path = path.rstrip("/") or "/"
+    if path == "/":
+        root_id = _get_root_id(files)
+        return root_id, files[root_id]
+    parts = [p for p in path.split("/") if p]
+    current_id = _get_root_id(files)
+    for part in parts:
+        found = None
+        for nid, n in files.items():
+            if n.get("p") == current_id and (n.get("a") or {}).get("n") == part:
+                found = nid
+                break
+        if found is None:
+            raise MegaError(f"Path not found: {path!r}", code="not_found")
+        current_id = found
+    return current_id, files[current_id]
+
+
+def _list_children(files, parent_id, parent_path):
+    """Return sorted [{type, name, size, path}] for direct children of parent_id."""
+    items = []
+    for nid, n in files.items():
+        t = n.get("t", 0)
+        if n.get("p") != parent_id or t not in (0, 1):
+            continue
+        name = (n.get("a") or {}).get("n", "?")
+        child_path = ("/" + name) if parent_path == "/" else (parent_path + "/" + name)
+        items.append({
+            "type": "folder" if t == 1 else "file",
+            "name": name,
+            "size": n.get("s"),
+            "path": child_path,
+        })
+    items.sort(key=lambda i: (i["type"] != "folder", i["name"].lower()))
+    return items
+
+
+def _collect_files_under(files, folder_id, cache, seen=None):
+    """Recursively collect (path, node) pairs for every file under folder_id."""
+    if seen is None:
+        seen = set()
+    result = []
+    for nid, n in files.items():
+        if n.get("p") != folder_id or nid in seen:
+            continue
+        t = n.get("t", 0)
+        if t == 0:
+            result.append((_node_path(nid, files, cache), n))
+        elif t == 1:
+            seen.add(nid)
+            result.extend(_collect_files_under(files, nid, cache, seen))
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Actions
+# ---------------------------------------------------------------------------
 
 def action_check(_args):
-    out, err, rc = _run(["mega-version"])
-    if rc != 0:
-        raise MegaError(f"mega-version failed: {err.strip() or out.strip()}", code="check_failed")
-    first_line = (out.strip().splitlines() or [""])[0]
-    return {"version": first_line}
+    try:
+        import importlib.metadata
+        version = importlib.metadata.version("mega.py")
+    except Exception:
+        version = "installed"
+    return {"version": f"mega.py {version}", "backend": "mega.py"}
 
 
 def action_whoami(_args):
-    out, err, rc = _run(["mega-whoami"])
-    text = (out + err).strip()
-    if rc != 0 or "Not logged in" in text or not text:
+    token = _load_saved_token()
+    if not token:
         return {"email": None}
-    # Output usually: "Account e-mail: foo@bar.com"
-    m = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", text)
-    return {"email": m.group(0) if m else None}
+    try:
+        sid, master_key = _token_to_session(token)
+        m = _make_mega(sid, master_key)
+        user = m.get_user()
+        return {"email": (user or {}).get("email")}
+    except Exception:
+        return {"email": None}
 
 
 def action_login(args):
-    email = args.get("email")
-    password = args.get("password")
+    session_token = (args.get("session_token") or "").strip()
+    email = (args.get("email") or "").strip()
+    password = args.get("password") or ""
+
+    if session_token:
+        sid, master_key = _token_to_session(session_token)
+        try:
+            m = _make_mega(sid, master_key)
+            user = m.get_user()
+        except Exception as e:
+            raise MegaError(f"Session token rejected by MEGA: {e}", code="login_failed")
+        user_email = (user or {}).get("email", "?")
+        token = _save_session(sid, master_key)
+        return {"email": user_email, "session_token": token}
+
     if not email or not password:
-        raise MegaError("login requires 'email' and 'password'", code="bad_args")
+        raise MegaError("Provide email+password or session_token", code="bad_args")
 
-    # If already logged in as a different user, log out first.
-    current = action_whoami({}).get("email")
-    if current and current != email:
-        _run(["mega-logout"])
+    from mega import Mega
+    try:
+        m = Mega().login(email, password)
+    except Exception as e:
+        raise MegaError(f"Login failed: {e}", code="login_failed")
 
-    out, err, rc = _run(["mega-login", email, password])
-    text = (out + err).strip()
-    if rc != 0:
-        # MEGAcmd writes auth failures to stderr with a useful message.
-        raise MegaError(text or "Login failed", code="login_failed")
-    return action_whoami({})
+    try:
+        user = m.get_user()
+        user_email = (user or {}).get("email", email)
+    except Exception:
+        user_email = email
+
+    token = _save_session(m.sid, m.master_key)
+    return {"email": user_email, "session_token": token}
 
 
 def action_logout(_args):
-    _run(["mega-logout"])
+    try:
+        SESSION_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
     return {}
 
 
-def _normalize_remote_path(path):
-    if not path:
-        return "/"
-    if not path.startswith("/"):
-        path = "/" + path
-    return path
-
-
-# Example `mega-ls -l /` line (column widths vary):
-#   FLAGS       VERS  SIZE      DATE                NAME
-#   drwxrwx---     -     -      14May2024 10:22:11  Documents
-#   -rw-rw----     1   1.5M     14May2024 10:22:11  file.jpg
-_LS_HEADER_RE = re.compile(r"^FLAGS\b", re.IGNORECASE)
-
-
-def _parse_ls_line(line, parent_path):
-    """Best-effort parse of a `mega-ls -l` line. Returns dict or None."""
-    if not line.strip():
-        return None
-    parts = line.split(None, 5)
-    if len(parts) < 6:
-        # Some entries may collapse VERS or other columns — try a looser split.
-        parts = line.split(None, 4)
-        if len(parts) < 5:
-            return None
-        flags, _vers_or_size, size, _date_or_name = parts[0], parts[1], parts[2], parts[3]
-        name = parts[-1]
-    else:
-        flags, _vers, size, _date_d, _date_t, name = parts
-    is_dir = flags.startswith("d")
-    if name in (".", ".."):
-        return None
-    full = parent_path.rstrip("/") + "/" + name if parent_path != "/" else "/" + name
-    return {
-        "type": "folder" if is_dir else "file",
-        "name": name,
-        "size": None if size == "-" else size,
-        "path": full,
-    }
-
-
 def action_list(args):
-    path = _normalize_remote_path(args.get("path", "/"))
-    out, err, rc = _run(["mega-ls", "-l", path])
-    if rc != 0:
-        raise MegaError(err.strip() or out.strip() or "list failed", code="list_failed")
-    items = []
-    for line in out.splitlines():
-        if _LS_HEADER_RE.match(line.strip()):
-            continue
-        parsed = _parse_ls_line(line, path)
-        if parsed:
-            items.append(parsed)
-    # Folders first, then files, both alphabetical — matches typical UI expectation.
-    items.sort(key=lambda i: (i["type"] != "folder", i["name"].lower()))
-    return items
+    path = (args.get("path") or "/").rstrip("/") or "/"
+    m = _get_mega()
+    files = m.get_files()
+    cache = {}
+    node_id, _node = _find_by_path(files, path)
+    cache[node_id] = path
+    return _list_children(files, node_id, path)
 
 
 def action_find(args):
     query = (args.get("query") or "").strip()
     if not query:
         raise MegaError("find requires 'query'", code="bad_args")
-    path = _normalize_remote_path(args.get("path") or "/")
-    # MEGAcmd `mega-find` supports glob patterns. Search recursively from path.
-    out, err, rc = _run(["mega-find", path, "--pattern=" + query])
-    if rc != 0:
-        # Some MEGAcmd versions take the pattern as a positional arg instead of
-        # --pattern=. Retry with the alternate form before giving up.
-        out2, err2, rc2 = _run(["mega-find", path, query])
-        if rc2 != 0:
-            raise MegaError(
-                err.strip() or err2.strip() or out.strip() or "find failed",
-                code="find_failed",
-            )
-        out = out2
+    search_path = (args.get("path") or "/").rstrip("/") or "/"
+    pattern = query if ("*" in query or "?" in query) else f"*{query}*"
+
+    m = _get_mega()
+    files = m.get_files()
+    cache = {}
     items = []
-    for line in out.splitlines():
-        p = line.strip()
-        if not p:
+    for nid, n in files.items():
+        t = n.get("t", 0)
+        if t not in (0, 1):
             continue
-        if not p.startswith("/"):
+        name = (n.get("a") or {}).get("n", "")
+        if not fnmatch.fnmatch(name.lower(), pattern.lower()):
             continue
-        name = p.rsplit("/", 1)[-1]
-        items.append({"type": "file", "name": name, "path": p})
+        full_path = _node_path(nid, files, cache)
+        if search_path != "/" and not full_path.startswith(search_path + "/"):
+            continue
+        items.append({"type": "folder" if t == 1 else "file", "name": name, "path": full_path})
     items.sort(key=lambda i: i["path"].lower())
     return items
 
@@ -240,18 +326,39 @@ def action_download(args):
     dest_path = Path(dest).expanduser().resolve()
     dest_path.mkdir(parents=True, exist_ok=True)
 
+    m = _get_mega()
+    files = m.get_files()
+    cache = {}
+
+    # Build path → (nid, node) map once.
+    path_to_node = {}
+    for nid, n in files.items():
+        if n.get("t") in (0, 1):
+            p = _node_path(nid, files, cache)
+            path_to_node[p] = (nid, n)
+
     items = []
     for remote in paths:
-        remote = _normalize_remote_path(remote)
-        out, err, rc = _run(["mega-get", remote, str(dest_path)])
-        if rc == 0:
-            items.append({"path": remote, "status": "ok"})
-        else:
-            items.append({
-                "path": remote,
-                "status": "error",
-                "error": (err.strip() or out.strip() or "download failed")[:500],
-            })
+        if not remote.startswith("/"):
+            remote = "/" + remote
+        entry = path_to_node.get(remote)
+        if entry is None:
+            items.append({"path": remote, "status": "error", "error": "Path not found in MEGA"})
+            continue
+        nid, node = entry
+        to_download = (
+            _collect_files_under(files, nid, cache)
+            if node.get("t") == 1
+            else [(remote, node)]
+        )
+        for file_path, file_node in to_download:
+            fname = (file_node.get("a") or {}).get("n", "download")
+            try:
+                m.download_file(file_node, dest_path=str(dest_path), dest_filename=fname)
+                items.append({"path": file_path, "status": "ok"})
+            except Exception as e:
+                items.append({"path": file_path, "status": "error", "error": str(e)[:500]})
+
     return {"dest": str(dest_path), "items": items}
 
 
@@ -266,52 +373,55 @@ ACTIONS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def _write(result, error):
+    """Write {"output": result, "error": error} and exit."""
+    sys.stdout.write(json.dumps({"output": result, "error": error}))
+    sys.stdout.flush()
+    # Always exit 0: errors are encoded in the JSON payload so Stash routes them
+    # through runPluginOperation's GraphQL error rather than crashing the job.
+    sys.exit(0)
+
+
 def main():
     raw = sys.stdin.read()
     if not raw.strip():
-        return {"ok": False, "error": "empty stdin", "code": "no_input"}, False
+        _write(None, "empty stdin")
+        return
+
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as e:
-        return {"ok": False, "error": f"invalid JSON: {e}", "code": "bad_json"}, False
+        _write(None, f"invalid JSON: {e}")
+        return
 
-    stash_mode = isinstance(payload, dict) and "args" in payload
-    args = payload.get("args") if stash_mode else payload
+    # Stash wraps task args: {"args": {...}, "server_connection": {...}}
+    args = payload.get("args") if isinstance(payload, dict) and "args" in payload else payload
     if not isinstance(args, dict):
-        return {"ok": False, "error": "args must be an object", "code": "bad_args"}, stash_mode
+        _write(None, "args must be an object")
+        return
+
     action = args.get("action")
     if not action:
-        return {"ok": False, "error": "missing 'action'", "code": "no_action"}, stash_mode
+        _write(None, "missing 'action'")
+        return
+
     handler = ACTIONS.get(action)
     if not handler:
-        return ({
-            "ok": False,
-            "error": f"unknown action '{action}'. valid: {sorted(ACTIONS)}",
-            "code": "unknown_action",
-        }, stash_mode)
+        _write(None, f"unknown action '{action}'. valid: {sorted(ACTIONS)}")
+        return
 
     try:
         result = handler(args)
-        return {"ok": True, "result": result}, stash_mode
+        _write(result, None)
     except MegaError as e:
-        return {"ok": False, "error": str(e), "code": e.code}, stash_mode
+        _write(None, str(e))
     except Exception as e:
-        return {"ok": False, "error": f"unhandled: {e}", "code": "internal"}, stash_mode
-
-
-def _stash_envelope(response):
-    """Encode a response into Stash's PluginOutput shape for transport via Job.error."""
-    if response.get("ok"):
-        payload = json.dumps(response.get("result"))
-        return {"output": None, "error": "OK:" + payload}
-    return {"output": None, "error": "ERR:" + (response.get("error") or "unknown")}
+        _write(None, f"unhandled error: {e}")
 
 
 if __name__ == "__main__":
-    response, stash_mode = main()
-    out = _stash_envelope(response) if stash_mode else response
-    sys.stdout.write(json.dumps(out))
-    sys.stdout.flush()
-    # In Stash mode always exit 0 — Stash treats nonzero as a hard plugin failure
-    # and we want the structured error to come through Job.error instead.
-    sys.exit(0 if (stash_mode or response.get("ok")) else 1)
+    main()
