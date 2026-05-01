@@ -191,6 +191,8 @@
     // Run a backend action via runPluginOperation (Stash v0.25+).
     // Synchronous: one GraphQL round-trip, no polling.
     // Python "output" → resolved value; Python "error" → GraphQL error → rejected promise.
+    // Hard timeout: MEGA login involves SRP key exchange and can take 10-60s on a slow
+    // connection. We cap at 120s so the UI never hangs forever.
     async _runTask(action, args) {
       // ApolloCapture sets _client in a useEffect; on a direct reload to
       // /mega-browser the page can mount before that fires. Short grace period.
@@ -202,30 +204,54 @@
         throw new Error("Apollo client not initialized — plugin not fully loaded");
       }
       const argsMap = Object.assign({ action }, args || {});
+      console.log(`[mega-import] _runTask → action=${action}`, argsMap);
+      const t0 = Date.now();
+
+      const TIMEOUT_MS = 120_000;
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`Backend timed out after ${TIMEOUT_MS / 1000}s (action=${action})`)), TIMEOUT_MS)
+      );
+
       try {
-        const resp = await this._client.mutate({
-          mutation: RUN_OPERATION,
-          variables: { id: PLUGIN_ID, args: argsMap },
-        });
-        return resp && resp.data && resp.data.runPluginOperation;
+        const resp = await Promise.race([
+          this._client.mutate({
+            mutation: RUN_OPERATION,
+            variables: { id: PLUGIN_ID, args: argsMap },
+          }),
+          timeoutPromise,
+        ]);
+        const result = resp && resp.data && resp.data.runPluginOperation;
+        console.log(`[mega-import] _runTask ← action=${action} in ${Date.now() - t0}ms`, result);
+        return result;
       } catch (e) {
         // GraphQL errors from Python's {"error": "..."} land here.
         const msg = (e.graphQLErrors && e.graphQLErrors[0] && e.graphQLErrors[0].message)
           || e.message || String(e);
+        console.error(`[mega-import] _runTask ✗ action=${action} in ${Date.now() - t0}ms — ${msg}`, e);
         logError("runPluginOperation", e, { action });
         throw new Error(msg);
       }
     },
 
     async login(email, password) {
+      console.log("[mega-import] login: calling backend...");
       const result = await this._runTask("login", { email, password });
+      console.log("[mega-import] login: backend responded", result);
+      if (!result || !result.email) {
+        throw new Error("Backend returned no email — login may have failed silently");
+      }
       this._session = { email: result.email, sessionToken: result.session_token || null };
       this._emitSessionChange();
       return this._session;
     },
 
     async loginWithToken(sessionToken) {
+      console.log("[mega-import] loginWithToken: calling backend...");
       const result = await this._runTask("login", { session_token: sessionToken });
+      console.log("[mega-import] loginWithToken: backend responded", result);
+      if (!result || !result.email) {
+        throw new Error("Backend returned no email — token may be invalid or expired");
+      }
       this._session = { email: result.email, sessionToken: result.session_token || sessionToken };
       this._emitSessionChange();
       return this._session;
@@ -382,7 +408,15 @@
     const [isLoading, setIsLoading] = React.useState(false);
     const [errorMsg, setErrorMsg] = React.useState(null);
     const [savedToken, setSavedToken] = React.useState(null); // shown after creds login
+    const [elapsed, setElapsed] = React.useState(0); // seconds since login started
     const toast = api.hooks.useToast();
+
+    // Tick elapsed counter while loading so user sees progress.
+    React.useEffect(() => {
+      if (!isLoading) { setElapsed(0); return; }
+      const id = setInterval(() => setElapsed(s => s + 1), 1000);
+      return () => clearInterval(id);
+    }, [isLoading]);
 
     const reset = () => {
       setEmail(""); setPassword(""); setTokenInput("");
@@ -556,7 +590,7 @@
             disabled: isLoading,
           },
           isLoading
-            ? [React.createElement(Icon, { icon: faSpinner, spin: true, key: "i" }), " Signing in…"]
+            ? [React.createElement(Icon, { icon: faSpinner, spin: true, key: "i" }), ` Signing in… ${elapsed}s`]
             : [React.createElement(Icon, { icon: faSignInAlt, key: "i" }), " Sign in"]
         )
       )
