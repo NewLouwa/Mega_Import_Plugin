@@ -5,6 +5,13 @@
 #   ./install.sh /custom/stash/plugins        # explicit target dir
 #   STASH_HOST=user@host ./install.sh         # remote install over SSH (rsync)
 #   STASH_HOST=user@host STASH_PLUGINS=/var/lib/stash/plugins ./install.sh
+#   STASH_HOST=root@10.0.0.5 SSH_OPTS="-J root@jump.example:2222 -i ~/.ssh/id_ed25519" ./install.sh
+#
+# Env vars:
+#   STASH_HOST     — user@host for remote install (rsync over SSH)
+#   STASH_PLUGINS  — explicit plugins dir on the target (skips auto-detection)
+#   SSH_OPTS       — extra args passed to ssh AND rsync's underlying ssh
+#                    (e.g. "-J jump.example", "-i ~/.ssh/key", "-p 2222")
 set -euo pipefail
 
 PLUGIN_NAME="mega_import"
@@ -22,6 +29,12 @@ FILES=(
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_BASE="${1:-${STASH_PLUGINS:-}}"
 REMOTE="${STASH_HOST:-}"
+SSH_OPTS="${SSH_OPTS:-}"
+# Build ssh + rsync-shell wrappers honoring SSH_OPTS.
+# Word-splitting is intentional: SSH_OPTS may contain multiple flags.
+# shellcheck disable=SC2206
+SSH_CMD=(ssh $SSH_OPTS)
+RSYNC_E="ssh $SSH_OPTS"
 
 red()   { printf "\033[31m%s\033[0m\n" "$*"; }
 green() { printf "\033[32m%s\033[0m\n" "$*"; }
@@ -58,10 +71,10 @@ check_prereqs_local() {
 }
 
 check_prereqs_remote() {
-  ssh "$REMOTE" 'command -v python3 >/dev/null || command -v python >/dev/null' \
+  "${SSH_CMD[@]}" "$REMOTE" 'command -v python3 >/dev/null || command -v python >/dev/null' \
     || { red "Python missing on $REMOTE"; return 1; }
-  if ssh "$REMOTE" 'command -v mega-version >/dev/null 2>&1'; then
-    green "MEGAcmd detected on $REMOTE: $(ssh "$REMOTE" 'mega-version | head -n1')"
+  if "${SSH_CMD[@]}" "$REMOTE" 'command -v mega-version >/dev/null 2>&1'; then
+    green "MEGAcmd detected on $REMOTE: $("${SSH_CMD[@]}" "$REMOTE" 'mega-version | head -n1')"
   else
     warn "MEGAcmd not found on $REMOTE. Install before using the plugin."
   fi
@@ -106,25 +119,33 @@ install_local() {
 # 5. Remote install via rsync over SSH.
 install_remote() {
   if [[ -z "${TARGET_BASE:-}" ]]; then
-    blue "Detecting Stash plugins dir on $REMOTE…"
+    blue "Detecting Stash plugins dir on $REMOTE..."
     for d in "${default_targets[@]}"; do
-      if ssh "$REMOTE" "[ -d '$d' ]"; then TARGET_BASE="$d"; break; fi
+      if "${SSH_CMD[@]}" "$REMOTE" "[ -d '$d' ]"; then TARGET_BASE="$d"; break; fi
     done
     if [[ -z "${TARGET_BASE:-}" ]]; then
-      red "No Stash plugins dir found on $REMOTE. Set STASH_PLUGINS=/path/on/remote ./install.sh"
+      red "No Stash plugins dir auto-detected on $REMOTE. Set STASH_PLUGINS=/path/on/remote ./install.sh"
       exit 1
     fi
+  else
+    # Explicit path — sanity-check it exists OR its parent is writable so we can create it.
+    if ! "${SSH_CMD[@]}" "$REMOTE" "[ -d '$TARGET_BASE' ] || [ -w \"\$(dirname '$TARGET_BASE')\" ]"; then
+      red "Target '$TARGET_BASE' on $REMOTE doesn't exist and parent isn't writable."
+      red "Verify the path (e.g. ssh into the host and ls), then re-run."
+      exit 1
+    fi
+    blue "Using explicit STASH_PLUGINS: $TARGET_BASE"
   fi
   local target="$TARGET_BASE/$PLUGIN_NAME"
   blue "Remote target: $REMOTE:$target"
-  ssh "$REMOTE" "mkdir -p '$target'"
-  rsync -av --delete \
+  "${SSH_CMD[@]}" "$REMOTE" "mkdir -p '$target'"
+  rsync -av --delete -e "$RSYNC_E" \
     --exclude '__pycache__' --exclude '*.pyc' --exclude '.git' \
     "${FILES[@]/#/$SCRIPT_DIR/}" \
     "$REMOTE:$target/"
   green "Installed to $REMOTE:$target"
   echo
-  echo "Next: open Stash → Settings → Plugins → click 'Reload Plugins'."
+  echo "Next: open Stash -> Settings -> Plugins -> click 'Reload Plugins'."
 }
 
 cd "$SCRIPT_DIR"
