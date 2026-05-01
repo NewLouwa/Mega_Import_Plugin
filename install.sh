@@ -57,27 +57,34 @@ find_local_target() {
 }
 
 # 2. Pre-flight check on the target machine (local OR remote).
+install_megapy_local() {
+  local pip="${PY:-python3} -m pip"
+  blue "Installing / upgrading Python dependencies (mega.py, tenacity≥8)..."
+  # tenacity ≤5 uses asyncio.coroutine which was removed in Python 3.11.
+  # Install ≥8 first so mega.py's install doesn't downgrade it.
+  $pip install --upgrade --quiet "tenacity>=8.0" "mega.py" 2>/dev/null \
+    || $pip install --upgrade --quiet --break-system-packages "tenacity>=8.0" "mega.py" 2>/dev/null \
+    || warn "pip install failed — ensure mega.py and tenacity>=8 are installed."
+}
+
 check_prereqs_local() {
   if ! command -v python3 >/dev/null 2>&1 && ! command -v python >/dev/null 2>&1; then
     red "Python not found on PATH. Install python3."
     return 1
   fi
-  if ! command -v mega-version >/dev/null 2>&1; then
-    warn "MEGAcmd not found on PATH. Plugin will install but MEGA actions will fail."
-    warn "Install MEGAcmd from: https://mega.nz/cmd"
-  else
-    green "MEGAcmd detected: $(mega-version | head -n1)"
-  fi
+  install_megapy_local
+}
+
+install_megapy_remote() {
+  blue "Installing / upgrading Python dependencies on $REMOTE (mega.py, tenacity≥8)..."
+  "${SSH_CMD[@]}" "$REMOTE" \
+    'pip3 install --upgrade --quiet "tenacity>=8.0" "mega.py" 2>/dev/null || pip3 install --upgrade --quiet --break-system-packages "tenacity>=8.0" "mega.py" 2>/dev/null || true'
 }
 
 check_prereqs_remote() {
   "${SSH_CMD[@]}" "$REMOTE" 'command -v python3 >/dev/null || command -v python >/dev/null' \
     || { red "Python missing on $REMOTE"; return 1; }
-  if "${SSH_CMD[@]}" "$REMOTE" 'command -v mega-version >/dev/null 2>&1'; then
-    green "MEGAcmd detected on $REMOTE: $("${SSH_CMD[@]}" "$REMOTE" 'mega-version | head -n1')"
-  else
-    warn "MEGAcmd not found on $REMOTE. Install before using the plugin."
-  fi
+  install_megapy_remote
 }
 
 # 3. Run Python smoke test locally before deploying.

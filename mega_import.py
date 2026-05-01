@@ -48,6 +48,15 @@ import random
 import sys
 from pathlib import Path
 
+# ---------------------------------------------------------------------------
+# Compatibility: asyncio.coroutine was removed in Python 3.11.
+# tenacity ≤ 5.x (and some older mega.py deps) still use it at import time.
+# Patch it back in as a no-op decorator so the import doesn't crash.
+# ---------------------------------------------------------------------------
+import asyncio as _asyncio
+if not hasattr(_asyncio, "coroutine"):
+    _asyncio.coroutine = lambda f: f
+
 SESSION_FILE = Path(os.environ.get("MEGA_SESSION_FILE", "/tmp/.mega_session.json"))
 DEFAULT_DEST = os.environ.get("MEGA_IMPORT_DEST", "mega_imports")
 
