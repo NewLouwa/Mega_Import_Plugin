@@ -34,6 +34,30 @@ All MEGA traffic is **server-side** — the browser only ever talks to Stash. Fi
 
 ## Installation
 
+### Option A — installer script (recommended)
+
+```bash
+# Linux / macOS / WSL — local install
+./install.sh
+
+# Linux / macOS / WSL — explicit target
+./install.sh /path/to/stash/plugins
+
+# Linux / macOS / WSL — remote install over SSH
+STASH_HOST=user@server ./install.sh
+STASH_HOST=user@server STASH_PLUGINS=/var/lib/stash/plugins ./install.sh
+```
+
+```powershell
+# Windows
+.\install.ps1
+.\install.ps1 -Target "C:\path\to\stash\plugins"
+```
+
+The installer auto-detects common Stash plugins paths, runs the Python unit tests before copying anything, warns if MEGAcmd isn't installed, then copies files to `<plugins>/mega_import/`.
+
+### Option B — manual
+
 1. Copy this folder into your Stash plugins directory (default `~/.stash/plugins/mega_import/`).
 2. In Stash → Settings → Plugins, click **Reload Plugins**.
 3. A red MEGA logo appears in the top navigation bar.
