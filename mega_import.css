@@ -178,12 +178,6 @@
 }
 
 /* File Browser Styles */
-.file-browser {
-  height: 400px;
-  display: flex;
-  flex-direction: column;
-}
-
 .path-navigation {
   padding: 8px;
   background-color: #f8f9fa;
@@ -251,6 +245,146 @@
   color: #0d6efd;
 }
 
+/* Toolbar (filter + select-all/clear) */
+.mega-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.mega-filter-group {
+  flex: 1 1 280px;
+  max-width: 520px;
+}
+
+.mega-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* Settings panel */
+.mega-settings-panel {
+  padding: 16px;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  background-color: #f8f9fa;
+}
+
+.mega-settings-panel h5 {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+/* Empty state */
+.mega-empty-state {
+  padding: 32px 16px;
+  text-align: center;
+  color: #6c757d;
+  font-style: italic;
+}
+
+/* Search */
+.mega-search-group {
+  max-width: 720px;
+}
+
+/* Already-imported indicator on file rows */
+.file-item.imported {
+  border-left: 3px solid #28a745;
+}
+
+.file-imported-badge {
+  color: #28a745;
+  margin-right: 10px;
+}
+
+.file-path-suffix {
+  margin-left: 6px;
+  font-weight: normal;
+}
+
+/* History panel */
+.mega-history-panel {
+  padding: 16px;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  background-color: #f8f9fa;
+}
+
+.mega-history-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.mega-history-row {
+  display: grid;
+  grid-template-columns: 160px 1fr 120px;
+  gap: 12px;
+  padding: 6px 4px;
+  border-bottom: 1px solid #e9ecef;
+  font-size: 13px;
+  align-items: center;
+}
+
+.mega-history-row:last-child {
+  border-bottom: none;
+}
+
+.mega-history-time {
+  color: #6c757d;
+  font-variant-numeric: tabular-nums;
+}
+
+.mega-history-path {
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.mega-history-status {
+  text-align: right;
+}
+
+.mega-history-row.ok .mega-history-status { color: #28a745; }
+.mega-history-row.err .mega-history-status { color: #dc3545; }
+
+/* Import progress */
+.mega-progress {
+  padding: 12px 16px;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  background-color: #f8f9fa;
+}
+
+.mega-progress-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.mega-progress-current {
+  color: #6c757d;
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.mega-progress-bar-outer {
+  background-color: #e9ecef;
+  border-radius: 4px;
+  height: 8px;
+  overflow: hidden;
+}
+
+.mega-progress-bar-inner {
+  background-color: #d9272e;
+  height: 100%;
+  transition: width 0.2s ease-out;
+}
+
 /* Results Tab Styles */
 .import-results {
   padding: 15px;
@@ -309,27 +443,8 @@
   border-color: #e68a8f;
 }
 
-/* Tab Styles */
-.nav-tabs .nav-link.active {
-  font-weight: 500;
-  color: #d9272e;
-  border-color: #dee2e6 #dee2e6 #fff;
-}
-
-.nav-tabs .nav-link:not(.active) {
-  color: #495057;
-}
-
-.nav-tabs .nav-link.disabled {
-  color: #adb5bd;
-}
-
 /* Responsive Design */
 @media (max-width: 768px) {
-  .file-browser {
-    height: 300px;
-  }
-  
   .modal-dialog {
     margin: 0.5rem;
   }

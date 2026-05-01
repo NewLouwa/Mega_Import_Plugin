@@ -1,21 +1,20 @@
 name: MEGA Import
-description: Import files from MEGA.nz directly into Stash
-version: 1.0.0
+description: Import files from MEGA.nz directly into Stash via MEGAcmd
+version: 0.2.0
 ui:
   javascript:
     - mega_import.js
   css:
     - mega_import.css
-  csp:
-    connect-src:
-      - "https://mega.nz"
-      - "https://g.api.mega.co.nz"
 exec:
   - python
   - "{pluginDir}/mega_import.py"
 interface: raw
 tasks:
-  - name: Import from MEGA
-    description: Import files from MEGA.nz
+  # Single task — the JS bridge passes 'action' in args_map to dispatch.
+  # Result is encoded into Job.error as 'OK:<json>' / 'ERR:<message>' because
+  # Stash's GraphQL doesn't expose plugin task stdout. See mega_import.py docstring.
+  - name: MEGA Operation
+    description: Generic MEGA backend operation (login, list, download, etc.)
     defaultArgs:
-      url: "" 
+      action: ""

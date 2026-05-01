@@ -1,137 +1,125 @@
 # MEGA Import Plugin for Stash
 
-A Stash plugin that allows you to import media directly from MEGA.nz cloud storage by logging into your MEGA account and browsing your files.
+Browse your MEGA.nz cloud storage from inside Stash, select files, and have them downloaded onto the Stash server and scanned into your library — without leaving the UI.
 
-## Installation
+## How it works
 
-For Stash 0.15.0 and higher:
+```
+[Browser]               [Stash server]                [MEGA.nz]
+  React UI  --GraphQL--> Stash plugin task
+                              |
+                              v
+                         mega_import.py
+                              |
+                              v
+                         MEGAcmd  <----- HTTPS ----->  MEGA
+                              |
+                              v
+                       <stash>/mega_imports/
+                              |
+                              v
+                       metadataScan triggered
+```
 
-1. Download this repository
-2. Place the `mega_import` folder in your Stash plugins directory:
-   - Default: `~/.stash/plugins/`
-   - Custom: `.local/plugins/` (if using customized setup)
-3. Restart Stash or click "Reload Plugins" in the Plugins settings
-
-## Usage
-
-1. Click the MEGA Import button in the top navigation bar (shows the MEGA logo)
-2. Log in with your MEGA.nz account credentials
-3. After successful login, you'll be redirected to the MEGA Cloud Browser page
-4. Browse your MEGA cloud storage and select files to import
-5. Click "Import Selected" to download the selected files to your Stash library
-6. When finished, click "Back to Stash" to return to the main interface
-
-### Features
-
-- Direct login to your MEGA account
-- Dedicated browser page for MEGA cloud storage
-- Navigate through folders with intuitive interface
-- Select multiple files for import
-- Visual file selection with checkboxes
-- Clear path navigation
-- Full-screen browsing experience
-- Easy return to Stash main interface with "Back to Stash" button
-- Account management integrated with the plugin
-- Direct MEGA API integration (uses megajs library)
+All MEGA traffic is **server-side** — the browser only ever talks to Stash. Files land on the same machine that runs Stash, so the auto-triggered metadata scan can pick them up.
 
 ## Requirements
 
-- Stash 0.15.0 or higher
-- Python 3.6+ (with `mega.py` library installed)
-- Internet connection for accessing MEGA.nz
+- **Stash 0.20+** (for the plugin task GraphQL surface used here)
+- **Python 3.8+** on the Stash machine (no extra Python packages — uses stdlib only)
+- **MEGAcmd** on the Stash machine. Install from <https://mega.nz/cmd>.
+  - Linux/macOS: package installer puts `mega-login`, `mega-ls`, etc. on PATH automatically.
+  - **Windows**: install adds binaries to `%LOCALAPPDATA%\MEGAcmd\`. Either add that directory to PATH, or the plugin will auto-detect it from there.
+  - Verify with: `mega-version` from a terminal.
 
-## Configuration
+## Installation
 
-No additional configuration is required. Simply install the plugin and restart Stash.
+1. Copy this folder into your Stash plugins directory (default `~/.stash/plugins/mega_import/`).
+2. In Stash → Settings → Plugins, click **Reload Plugins**.
+3. A red MEGA logo appears in the top navigation bar.
 
-## Technical Implementation
+## Usage
 
-The plugin uses a modular architecture:
+1. Click the MEGA navbar button → log in with your MEGA email and password.
+2. You're sent to the **MEGA Cloud Browser** page. Navigate folders, check files.
+3. Click **Import Selected** — the Stash server downloads them and starts a metadata scan.
+4. Imported files appear in `<plugin install dir>/mega_imports/` (overridable via the `MEGA_IMPORT_DEST` environment variable on the Stash process).
+5. **Disconnect** logs out of MEGA; **Back to Stash** returns without logging out.
 
-- `MegaApiClient`: A JavaScript module that handles all interactions with the MEGA API
-- `MegaImportComponent`: The main React component that coordinates the UI
-- `MegaBrowserPage`: A dedicated page component for browsing MEGA files
-- Direct integration with the MEGA.nz API via the megajs library
+## Architecture
 
-### MEGA API Integration Pattern
+| File | Role |
+| --- | --- |
+| [mega_import.js](mega_import.js) | React UI (navbar button, login modal, browser page) + GraphQL bridge (`MegaApiClient`) |
+| [mega_import.py](mega_import.py) | Subprocess wrapper around MEGAcmd. Stdin/stdout JSON protocol |
+| [mega_import.yml](mega_import.yml) | Stash plugin manifest. Single task `MEGA Operation` dispatched via `action` arg |
+| [mega_import.css](mega_import.css) | Page + modal styling |
 
-The plugin implements a wrapper around the mega.js library through the `MegaApiClient` module:
+### JS ↔ Python bridge
 
-```javascript
-// MEGA API Integration Module
-const MegaApiClient = {
-  // Private property to store the mega.js instance
-  _megaInstance: null,
-  
-  // Initialize the client and authenticate
-  initialize: async function(email, password) {
-    try {
-      // Create a new instance with credentials
-      this._megaInstance = new Mega({ email, password });
-      
-      // Login to MEGA account
-      await this._megaInstance.login(email, password);
-      
-      // Return account info
-      return { 
-        success: true,
-        // Account details
-      };
-    } catch (error) {
-      console.error("MEGA API initialization error:", error);
-      throw new Error(error.message || "Failed to initialize MEGA client");
-    }
-  },
-  
-  // Other methods for file operations, downloads, etc.
-}
+Stash's GraphQL doesn't expose plugin task stdout to the frontend. The bridge encodes results into the only field that *is* exposed (`Job.error`):
+
+- Python writes `{"output": null, "error": "OK:<json>"}` on success or `"ERR:<msg>"` on failure
+- JS calls `runPluginTask` → polls `findJob` → strips the prefix → resolves/rejects
+
+Polling interval is 250 ms; first response lands in ~250–500 ms after the job finishes.
+
+### Backend protocol
+
+Run standalone for testing:
+
+```bash
+echo '{"action":"check"}' | python mega_import.py
+echo '{"action":"login","email":"you@x.com","password":"…"}' | python mega_import.py
+echo '{"action":"list","path":"/"}' | python mega_import.py
+echo '{"action":"download","paths":["/file.mp4"],"dest":"./out"}' | python mega_import.py
+echo '{"action":"logout"}' | python mega_import.py
 ```
 
-This pattern encapsulates all MEGA API interactions and provides a consistent interface for UI components.
-
-## Development
-
-This plugin is under active development. Future features will include:
-
-- Enhanced MEGA.nz API integration with secure authentication
-- Advanced file filtering and searching
-- Folder recursive import with structure preservation
-- Import history tracking
-- Batch operations
-- Background processing for large imports
-- Drag and drop selection
-- File preview capabilities
-- User account management
+Standalone responses use `{"ok": true, "result": …}` / `{"ok": false, "error": …, "code": …}`. When invoked by Stash (input has an `args` key), responses are wrapped in the `OK:`/`ERR:` envelope above.
 
 ## Troubleshooting
 
-If the plugin doesn't work:
+| Symptom | Likely cause |
+| --- | --- |
+| `MEGAcmd command 'mega-version' not found` | Install MEGAcmd or add its install dir to PATH on the Stash machine |
+| `Apollo client not initialized` | Plugin loaded too late. Reload the page; if persistent, check browser console for `[mega-import]` errors |
+| Login succeeds, list fails immediately after | MEGAcmd's daemon (`mega-cmd-server`) may not be running. Try `mega-whoami` in a terminal |
+| Import succeeds but files don't appear in Stash | Check the metadata scan job in Stash; verify your library includes the import dest path |
+| `Job N disappeared before result was read` | Stash dropped the job from its queue between polls — increase `POLL_INTERVAL_MS` in `mega_import.js` (rare) |
 
-1. Check if all required files are present in the plugin folder:
-   - `mega_import.js`
-   - `mega_import.py`
-   - `mega_import.css`
-   - `info.json`
+Browser-side errors are prefixed `[mega-import]` in the devtools console.
 
-2. Ensure Python is installed and available in your PATH
-3. Check Stash logs for any errors
-4. Make sure you have an internet connection to access MEGA.nz
-5. Verify your MEGA.nz account credentials are correct
+## Features
 
-## Credits
+- Login modal with session persistence (`sessionStorage` — refresh on `/mega-browser` survives)
+- Full-screen browser page with breadcrumb path and folder navigation
+- File-type filter (All / Videos / Images / Custom extensions)
+- Recursive folder import (select a folder; MEGAcmd downloads it whole)
+- Search via `mega-find` (glob patterns across the whole tree)
+- Concurrent downloads — configurable 1–5 in flight at once
+- Live progress bar with per-file current path and in-flight count
+- Cancel button (drains in-flight tasks, no new dispatches)
+- Configurable destination folder
+- Import history with timestamp, status, path filter, status filter
+- "Already imported" green-check badge on file rows
+- Auto-trigger Stash `metadataScan` after import so files appear in your library
 
-- MEGA.nz for their cloud storage service
-- megajs library for MEGA API integration
-- Stash community for the plugin framework
+## Development
+
+Run the Python unit tests (no MEGAcmd or Stash needed — covers the parser,
+dispatch, error paths, and Stash envelope encoding):
+
+```bash
+python -m unittest test_mega_import -v
+```
+
+Syntax-check the JS:
+
+```bash
+node --check mega_import.js
+```
 
 ## License
 
-MIT License
-
-## Contact
-
-For issues or feature requests, please create an issue on the GitHub repository.
-
----
-
-**Note**: This plugin is not affiliated with or endorsed by MEGA.nz. 
+MIT. Not affiliated with MEGA.nz.
