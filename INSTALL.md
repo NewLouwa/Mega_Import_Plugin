@@ -230,6 +230,6 @@ Browser localStorage:
 PRs welcome. Please:
 
 1. Run `python -m unittest test_mega_import` and add a test for any new backend action
-2. Check the browser console — every error path must `console.error` with a `[mega-import]` prefix and include the original exception (CLAUDE rule #3 in the project root)
+2. Check the browser console — every error path must `console.error` with a `[mega-import]` prefix and include the original exception
 3. Bump `mega_import.yml`'s `version` field for any user-visible change
 4. Update this doc and `PROGRESS.md` if you finish a roadmap item
