@@ -188,11 +188,18 @@
 
     _setApolloClient(client) { this._client = client; },
 
+    // Per-action timeout overrides (ms).
+    // login must solve a SHA-256 Hashcash proof-of-work that MEGA's API
+    // requires; on a single-CPU container this can take 2-5 minutes.
+    // All other actions are fast network/IO calls capped at 2 minutes.
+    _timeoutMs(action) {
+      if (action === "login") return 10 * 60 * 1000;  // 10 min — PoW may take 3-5 min
+      return 120_000;                                   // 2 min for everything else
+    },
+
     // Run a backend action via runPluginOperation (Stash v0.25+).
     // Synchronous: one GraphQL round-trip, no polling.
     // Python "output" → resolved value; Python "error" → GraphQL error → rejected promise.
-    // Hard timeout: MEGA login involves SRP key exchange and can take 10-60s on a slow
-    // connection. We cap at 120s so the UI never hangs forever.
     async _runTask(action, args) {
       // ApolloCapture sets _client in a useEffect; on a direct reload to
       // /mega-browser the page can mount before that fires. Short grace period.
@@ -207,7 +214,7 @@
       console.log(`[mega-import] _runTask → action=${action}`, argsMap);
       const t0 = Date.now();
 
-      const TIMEOUT_MS = 120_000;
+      const TIMEOUT_MS = this._timeoutMs(action);
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error(`Backend timed out after ${TIMEOUT_MS / 1000}s (action=${action})`)), TIMEOUT_MS)
       );
@@ -557,6 +564,10 @@
                   placeholder: "MEGA password", disabled: isLoading,
                 })
               ),
+              React.createElement("small", { className: "text-muted d-block mt-2" },
+                "⚠ First login solves a server challenge — may take 2–5 min. ",
+                "Copy the session token shown afterwards for instant re-login."
+              ),
               React.createElement("button", { type: "submit", style: { display: "none" } })
             )
           : React.createElement(
@@ -590,7 +601,12 @@
             disabled: isLoading,
           },
           isLoading
-            ? [React.createElement(Icon, { icon: faSpinner, spin: true, key: "i" }), ` Signing in… ${elapsed}s`]
+            ? [
+                React.createElement(Icon, { icon: faSpinner, spin: true, key: "i" }),
+                elapsed < 5
+                  ? ` Signing in… ${elapsed}s`
+                  : ` Solving proof-of-work… ${elapsed}s`
+              ]
             : [React.createElement(Icon, { icon: faSignInAlt, key: "i" }), " Sign in"]
         )
       )

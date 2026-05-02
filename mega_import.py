@@ -268,8 +268,11 @@ def _session_request_with_hashcash(self, method, url, **kwargs):
         parsed = _parse_hashcash_header(hc_val)
         if parsed:
             token_b64, easiness = parsed
+            threshold = _hc_threshold(easiness)
+            avg_attempts = (2**32) // max(threshold, 1)
             print(
-                f"[mega-import] Hashcash challenge received (easiness={easiness}), solving…",
+                f"[mega-import] Hashcash challenge: easiness={easiness} "
+                f"threshold=0x{threshold:08x} ~{avg_attempts:,} attempts expected. Solving…",
                 file=sys.stderr,
             )
             try:
