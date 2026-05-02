@@ -7,6 +7,18 @@
   const { Icon } = api.components;
   const { gql, useApolloClient } = api.libraries.Apollo;
 
+  // Navigation compat shim.
+  // api.utils.navigate was added in a later Stash build; older builds don't
+  // have it.  Fall back to window.location.assign (causes a full page reload
+  // but still navigates correctly).
+  const navigateTo = (path) => {
+    if (typeof api.utils?.navigate === "function") {
+      navigateTo(path);
+    } else {
+      window.location.assign(path);
+    }
+  };
+
   const LOG_PREFIX = "[mega-import]";
   const OPEN_LOGIN_EVENT = "mega-import:open-login";
   const PLUGIN_ID = "mega_import";
@@ -393,7 +405,7 @@
     const session = useSession();
     const onClick = () => {
       if (session) {
-        api.utils.navigate("/mega-browser");
+        navigateTo("/mega-browser");
       } else {
         onOpenLogin();
       }
@@ -631,7 +643,7 @@
       React.createElement(LoginModal, {
         show: showModal,
         onClose: () => setShowModal(false),
-        onLoggedIn: () => api.utils.navigate("/mega-browser"),
+        onLoggedIn: () => navigateTo("/mega-browser"),
       })
     );
   };
@@ -757,7 +769,7 @@
     // Redirect on unauthenticated visit (initial load OR logout-elsewhere).
     React.useEffect(() => {
       if (!session) {
-        api.utils.navigate("/");
+        navigateTo("/");
         requestLogin();
       }
     }, [session]);
@@ -868,7 +880,7 @@
       try {
         await MegaApiClient.logout();
         toast.success("Disconnected from MEGA");
-        api.utils.navigate("/");
+        navigateTo("/");
       } catch (error) {
         const msg = (error && error.message) || "Unknown error";
         toast.error(`Logout failed: ${msg}`);
@@ -910,7 +922,7 @@
           { className: "mega-browser-actions" },
           React.createElement(
             Button,
-            { variant: "secondary", onClick: () => api.utils.navigate("/"), className: "mr-2" },
+            { variant: "secondary", onClick: () => navigateTo("/"), className: "mr-2" },
             React.createElement(Icon, { icon: faHome }),
             " Back to Stash"
           ),
