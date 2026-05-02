@@ -162,10 +162,22 @@ install_remote() {
   local target="$TARGET_BASE/$PLUGIN_NAME"
   blue "Remote target: $REMOTE:$target"
   "${SSH_CMD[@]}" "$REMOTE" "mkdir -p '$target'"
-  rsync -av --delete -e "$RSYNC_E" \
-    --exclude '__pycache__' --exclude '*.pyc' --exclude '.git' \
-    "${FILES[@]/#/$SCRIPT_DIR/}" \
-    "$REMOTE:$target/"
+
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -av --delete -e "$RSYNC_E" \
+      --exclude '__pycache__' --exclude '*.pyc' --exclude '.git' \
+      "${FILES[@]/#/$SCRIPT_DIR/}" \
+      "$REMOTE:$target/"
+  else
+    warn "rsync not found — falling back to scp (no --delete, no exclusions)."
+    for f in "${FILES[@]}"; do
+      if [[ -f "$SCRIPT_DIR/$f" ]]; then
+        # shellcheck disable=SC2086
+        scp $SSH_OPTS "$SCRIPT_DIR/$f" "$REMOTE:$target/$f"
+      fi
+    done
+  fi
+
   green "Installed to $REMOTE:$target"
   echo
   echo "Next: open Stash -> Settings -> Plugins -> click 'Reload Plugins'."
