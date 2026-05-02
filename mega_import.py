@@ -295,7 +295,39 @@ if _requests is not None:
     _requests.Session.request = _session_request_with_hashcash
 
 SESSION_FILE = Path(os.environ.get("MEGA_SESSION_FILE", "/tmp/.mega_session.json"))
-DEFAULT_DEST = os.environ.get("MEGA_IMPORT_DEST", "mega_imports")
+
+# Default download location.  We want a path that:
+#   1. Always exists / is creatable on any Stash install (Linux/macOS/Windows)
+#   2. Is writable by the Stash process (the user running stash)
+#   3. Survives container restarts (i.e. lives in something that's typically
+#      bind-mounted in dockerized installs)
+#
+# Stash's config dir (`~/.stash` or wherever the YAML lives) ticks all three:
+# every install has it, every install can write to it, and dockerized installs
+# universally mount it as a volume so files inside persist.  The plugin folder
+# itself is inside that config dir, so taking `<plugin_dir>/../mega_imports`
+# lands us in `~/.stash/mega_imports/`.
+#
+# Override priority:
+#   1. Explicit `dest` arg from the JS Settings panel
+#   2. MEGA_IMPORT_DEST environment variable
+#   3. <stash-config-dir>/mega_imports/  ← this default
+def _default_dest():
+    env = os.environ.get("MEGA_IMPORT_DEST")
+    if env:
+        return env
+    # Plugin file lives at <stash-config>/plugins/mega_import/mega_import.py
+    here = Path(__file__).resolve().parent
+    # Walk up until we find the "plugins" directory; its parent is the config dir.
+    p = here
+    for _ in range(4):
+        if p.name == "plugins":
+            return str(p.parent / "mega_imports")
+        p = p.parent
+    # Fallback: alongside the plugin folder.
+    return str(here.parent / "mega_imports")
+
+DEFAULT_DEST = _default_dest()
 
 
 class MegaError(Exception):
@@ -396,6 +428,52 @@ def _get_mega():
     return _make_mega(sid, master_key)
 
 
+# Cache the full MEGA file tree across action invocations.
+# mega.py.get_files() pulls the entire account metadata in one request; for
+# multi-TB accounts that's 30s-3min.  Each Stash plugin call spawns a fresh
+# subprocess, so we persist the cache to /tmp keyed by sid to amortize.
+_FILES_CACHE = {"sid": None, "files": None, "ts": 0.0}
+_FILES_CACHE_TTL = 3600  # 1 hour
+_FILES_CACHE_FILE = Path("/tmp/.mega_files_cache.json")
+
+
+def _cached_get_files(m):
+    import time as _time
+    sid = getattr(m, "sid", None)
+    now = _time.time()
+
+    # In-memory hit (same process)
+    if (
+        _FILES_CACHE["sid"] == sid
+        and _FILES_CACHE["files"] is not None
+        and (now - _FILES_CACHE["ts"]) < _FILES_CACHE_TTL
+    ):
+        return _FILES_CACHE["files"]
+
+    # On-disk hit (across subprocesses)
+    if _FILES_CACHE_FILE.exists():
+        try:
+            blob = json.loads(_FILES_CACHE_FILE.read_text())
+            if blob.get("sid") == sid and (now - blob.get("ts", 0)) < _FILES_CACHE_TTL:
+                files = blob["files"]
+                _FILES_CACHE.update(sid=sid, files=files, ts=blob["ts"])
+                print(f"[mega-import] tree cache hit ({len(files)} nodes)", file=sys.stderr)
+                return files
+        except Exception as e:
+            print(f"[mega-import] cache read failed: {e}", file=sys.stderr)
+
+    print("[mega-import] fetching full MEGA tree (cache miss)...", file=sys.stderr)
+    t0 = _time.time()
+    files = m.get_files()
+    print(f"[mega-import] tree fetched: {len(files)} nodes in {_time.time()-t0:.1f}s", file=sys.stderr)
+    _FILES_CACHE.update(sid=sid, files=files, ts=now)
+    try:
+        _FILES_CACHE_FILE.write_text(json.dumps({"sid": sid, "files": files, "ts": now}))
+    except Exception as e:
+        print(f"[mega-import] cache write failed: {e}", file=sys.stderr)
+    return files
+
+
 # ---------------------------------------------------------------------------
 # File-tree helpers.
 # mega.py returns a flat {node_id: node} dict; we resolve paths by walking
@@ -453,27 +531,85 @@ def _find_by_path(files, path):
     return current_id, files[current_id]
 
 
-def _list_children(files, parent_id, parent_path):
-    """Return sorted [{type, name, size, path}] for direct children of parent_id."""
-    items = []
+def _build_children_index(files):
+    """{parent_id: [child_node_id, ...]} — built once, memoized for the call."""
+    idx = {}
     for nid, n in files.items():
+        p = n.get("p")
+        if p:
+            idx.setdefault(p, []).append(nid)
+    return idx
+
+
+def _folder_aggregates(folder_id, files, children_idx, memo):
+    """Recursive (file_count, total_size) for everything under folder_id."""
+    if folder_id in memo:
+        return memo[folder_id]
+    total_files = 0
+    total_size = 0
+    stack = [folder_id]
+    seen = set()
+    while stack:
+        cur = stack.pop()
+        if cur in seen:
+            continue
+        seen.add(cur)
+        for cid in children_idx.get(cur, ()):
+            child = files.get(cid)
+            if not child:
+                continue
+            t = child.get("t", 0)
+            if t == 0:  # file
+                total_files += 1
+                total_size += child.get("s") or 0
+            elif t == 1:  # folder
+                stack.append(cid)
+    memo[folder_id] = (total_files, total_size)
+    return total_files, total_size
+
+
+def _list_children(files, parent_id, parent_path):
+    """Return sorted [{type, name, size, path, child_count?, total_size?}] for direct children.
+
+    Folders include `child_count` (recursive file count) and `total_size`
+    (recursive byte count) so the UI can sort by smallest-first.  Files include
+    only their own size.
+    """
+    children_idx = _build_children_index(files)
+    agg_memo = {}
+    items = []
+    for cid in children_idx.get(parent_id, ()):
+        n = files.get(cid)
+        if not n:
+            continue
         t = n.get("t", 0)
-        if n.get("p") != parent_id or t not in (0, 1):
+        if t not in (0, 1):
             continue
         name = (n.get("a") or {}).get("n", "?")
         child_path = ("/" + name) if parent_path == "/" else (parent_path + "/" + name)
-        items.append({
-            "type": "folder" if t == 1 else "file",
-            "name": name,
-            "size": n.get("s"),
-            "path": child_path,
-        })
+        if t == 1:
+            cc, ts = _folder_aggregates(cid, files, children_idx, agg_memo)
+            items.append({
+                "type": "folder",
+                "name": name,
+                "size": ts,           # recursive size for folders
+                "child_count": cc,    # recursive file count
+                "total_size": ts,
+                "path": child_path,
+            })
+        else:
+            items.append({
+                "type": "file",
+                "name": name,
+                "size": n.get("s"),
+                "path": child_path,
+            })
     items.sort(key=lambda i: (i["type"] != "folder", i["name"].lower()))
     return items
 
 
 def _collect_files_under(files, folder_id, cache, seen=None):
-    """Recursively collect (path, node) pairs for every file under folder_id."""
+    """Recursively collect (path, nid, node) tuples for every file under folder_id."""
     if seen is None:
         seen = set()
     result = []
@@ -482,7 +618,7 @@ def _collect_files_under(files, folder_id, cache, seen=None):
             continue
         t = n.get("t", 0)
         if t == 0:
-            result.append((_node_path(nid, files, cache), n))
+            result.append((_node_path(nid, files, cache), nid, n))
         elif t == 1:
             seen.add(nid)
             result.extend(_collect_files_under(files, nid, cache, seen))
@@ -561,7 +697,7 @@ def action_logout(_args):
 def action_list(args):
     path = (args.get("path") or "/").rstrip("/") or "/"
     m = _get_mega()
-    files = m.get_files()
+    files = _cached_get_files(m)
     cache = {}
     node_id, _node = _find_by_path(files, path)
     cache[node_id] = path
@@ -576,7 +712,7 @@ def action_find(args):
     pattern = query if ("*" in query or "?" in query) else f"*{query}*"
 
     m = _get_mega()
-    files = m.get_files()
+    files = _cached_get_files(m)
     cache = {}
     items = []
     for nid, n in files.items():
@@ -594,6 +730,121 @@ def action_find(args):
     return items
 
 
+_SAFE_NAME_RE = None  # lazy compile
+
+
+def _parse_filename_meta(name, full_path=None):
+    """Best-effort metadata extraction from a filename.
+
+    Returns a dict possibly containing:
+      quality   - "1080p", "720p", "4K", "2160p", etc.
+      year      - 4-digit year if found in (parens) or [brackets]
+      performers - list of [Name] / {Name} bracketed performer names
+      studio    - first (Studio) parenthesized phrase that isn't a year
+      title     - cleaned-up title with bracket/paren content stripped
+      tags      - list of common scene tags detected (POV, Anal, etc.)
+
+    All fields are tentative; UI presents them as suggestions, not facts.
+    Designed to be safe: unknown patterns just give an empty dict.
+    """
+    import re
+    if not name:
+        return {}
+    base = name.rsplit(".", 1)[0]
+    meta = {}
+
+    # --- Quality ---
+    q = re.search(r"\b(2160p|4k|1080p|720p|480p|360p|UHD|HD|SD)\b", base, re.IGNORECASE)
+    if q:
+        meta["quality"] = q.group(1).upper().replace("4K", "4K").replace("2160P", "2160p").replace("1080P", "1080p").replace("720P", "720p").replace("480P", "480p").replace("360P", "360p")
+
+    # --- Year ---
+    y = re.search(r"[\(\[](19\d{2}|20\d{2})[\)\]]", base)
+    if y:
+        meta["year"] = int(y.group(1))
+
+    # --- Bracketed performers: [Name1] [Name2] or {Name1} {Name2} ---
+    performers = []
+    for match in re.finditer(r"[\[\{]([^\]\}]{2,40})[\]\}]", base):
+        candidate = match.group(1).strip()
+        # Skip if it's a year, quality, or pure number.
+        if re.fullmatch(r"\d{3,4}p?|19\d{2}|20\d{2}|UHD|HD|SD|4K", candidate, re.IGNORECASE):
+            continue
+        performers.append(candidate)
+    if performers:
+        meta["performers"] = performers
+
+    # --- Studio: first (Word) that isn't a year/quality/source tag ---
+    for match in re.finditer(r"\(([^)]{2,40})\)", base):
+        candidate = match.group(1).strip()
+        if re.fullmatch(r"\d{4}|\d{3,4}p|UHD|HD|SD|4K|x264|x265|h264|h265|HEVC|WEB[-_ ]?DL|BluRay|BDRip|DVDRip|XXX|MP4", candidate, re.IGNORECASE):
+            continue
+        meta["studio"] = candidate
+        break
+
+    # --- Tags: common scene descriptors ---
+    tag_patterns = ["POV", "Anal", "Lesbian", "MILF", "Teen", "Solo", "Threesome", "BBC", "Interracial", "Gangbang", "Creampie", "BDSM"]
+    found_tags = []
+    for t in tag_patterns:
+        if re.search(rf"\b{re.escape(t)}\b", base, re.IGNORECASE):
+            found_tags.append(t)
+    if found_tags:
+        meta["tags"] = found_tags
+
+    # --- Source ---
+    s = re.search(r"\b(WEB[-_ ]?DL|WEBRip|BluRay|BDRip|DVDRip|HDRip|HDTV|XXX)\b", base, re.IGNORECASE)
+    if s:
+        meta["source"] = s.group(1).upper().replace("_", "-").replace(" ", "-")
+
+    # --- Cleaned title ---
+    title = re.sub(r"[\[\{][^\]\}]*[\]\}]", " ", base)  # strip brackets
+    title = re.sub(r"\([^)]*\)", " ", title)             # strip parens
+    title = re.sub(r"\b(2160p|1080p|720p|480p|360p|4K|UHD|HD|SD|XXX|WEB[-_ ]?DL|WEBRip|BluRay|x264|x265|HEVC)\b", " ", title, flags=re.IGNORECASE)
+    title = re.sub(r"[._\-]+", " ", title)               # collapse separators
+    title = re.sub(r"\s+", " ", title).strip()
+    if title and title.lower() not in {"download", base.lower()}:
+        meta["title"] = title
+
+    return meta
+
+def _slugify_filename(name):
+    """Filesystem-safe filename: keep ASCII letters/digits/._- and collapse spaces.
+
+    Preserves the extension.  Empty/garbage names become 'download'.
+    Avoids leading dots (hidden files) and reserved bare names.
+    """
+    import re, unicodedata
+    global _SAFE_NAME_RE
+    if _SAFE_NAME_RE is None:
+        _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+    if not name:
+        return "download"
+    # Strip path separators just in case (defensive — name should already be a leaf).
+    name = name.replace("/", "_").replace("\\", "_")
+    # Best-effort transliteration: 'café' → 'cafe'.
+    name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    # Split off extension (last dot only); slugify each part separately so
+    # extensions like ".jpg" survive cleanly.
+    if "." in name:
+        stem, ext = name.rsplit(".", 1)
+    else:
+        stem, ext = name, ""
+    stem = _SAFE_NAME_RE.sub("_", stem).strip("._-")
+    ext = _SAFE_NAME_RE.sub("", ext).strip(".")
+    if not stem:
+        stem = "download"
+    out = f"{stem}.{ext}" if ext else stem
+    # Cap at 200 chars to leave headroom for the dest path on most filesystems.
+    if len(out) > 200:
+        if ext:
+            keep = 200 - len(ext) - 1
+            out = stem[:keep] + "." + ext
+        else:
+            out = out[:200]
+    return out
+
+
 def action_download(args):
     paths = args.get("paths") or []
     dest = args.get("dest") or DEFAULT_DEST
@@ -601,7 +852,7 @@ def action_download(args):
     dest_path.mkdir(parents=True, exist_ok=True)
 
     m = _get_mega()
-    files = m.get_files()
+    files = _cached_get_files(m)
     cache = {}
 
     # Build path → (nid, node) map once.
@@ -623,17 +874,159 @@ def action_download(args):
         to_download = (
             _collect_files_under(files, nid, cache)
             if node.get("t") == 1
-            else [(remote, node)]
+            else [(remote, nid, node)]
         )
-        for file_path, file_node in to_download:
-            fname = (file_node.get("a") or {}).get("n", "download")
+        for file_path, file_nid, file_node in to_download:
+            raw_fname = (file_node.get("a") or {}).get("n", "download")
+            fname = _slugify_filename(raw_fname)
+            expected_size = file_node.get("s")
+            target_file = dest_path / fname
+            print(f"[mega-import] downloading {file_path!r} → {target_file} (raw={raw_fname!r}, size={expected_size})", file=sys.stderr)
             try:
-                m.download_file(file_node, dest_path=str(dest_path), dest_filename=fname)
-                items.append({"path": file_path, "status": "ok"})
+                # mega.py expects file=(nid, node_dict). The method is `download`,
+                # NOT `download_file` (that name doesn't exist on the Mega class).
+                m.download((file_nid, file_node), dest_path=str(dest_path), dest_filename=fname)
+                items.append({"path": file_path, "status": "ok", "saved_as": fname})
+            except ValueError as e:
+                # mega.py's post-download MAC verification is buggy for many files
+                # (https://github.com/odwyersoftware/mega.py/issues/61).  When it
+                # raises, the fully-downloaded bytes are still sitting in a temp
+                # file like /tmp/megapy_XXXXX (mega.py used delete=False and
+                # raises BEFORE shutil.move()).  Find that orphan and move it.
+                if "mismatched mac" in str(e).lower() and expected_size is not None:
+                    import tempfile, glob, shutil as _shutil
+                    tmp_dir = tempfile.gettempdir()
+                    candidates = [
+                        Path(p) for p in glob.glob(str(Path(tmp_dir) / "megapy_*"))
+                        if Path(p).is_file()
+                    ]
+                    # Most-recent first, prefer exact size match.
+                    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                    rescued = None
+                    for cand in candidates:
+                        try:
+                            if cand.stat().st_size == expected_size:
+                                _shutil.move(str(cand), str(target_file))
+                                rescued = target_file
+                                break
+                        except Exception:
+                            continue
+                    if rescued is not None:
+                        print(f"[mega-import] MAC failed but rescued temp file → {rescued} ({expected_size}b)", file=sys.stderr)
+                        items.append({"path": file_path, "status": "ok", "warning": "mac-check-skipped", "saved_as": fname})
+                        continue
+                    print(f"[mega-import] download failed path={file_path!r}: ValueError: {e} (no rescuable temp file in {tmp_dir})", file=sys.stderr)
+                    items.append({"path": file_path, "status": "error", "error": f"ValueError: {str(e)[:400]}"})
+                else:
+                    print(f"[mega-import] download failed path={file_path!r}: ValueError: {e}", file=sys.stderr)
+                    items.append({"path": file_path, "status": "error", "error": f"ValueError: {str(e)[:400]}"})
             except Exception as e:
-                items.append({"path": file_path, "status": "error", "error": str(e)[:500]})
+                print(f"[mega-import] download failed path={file_path!r}: {type(e).__name__}: {e}", file=sys.stderr)
+                items.append({"path": file_path, "status": "error", "error": f"{type(e).__name__}: {str(e)[:400]}"})
 
     return {"dest": str(dest_path), "items": items}
+
+
+def action_temp_progress(args):
+    """Snapshot of active mega.py download temp files.
+
+    Returns [{name, size, mtime, age_s}] for every /tmp/megapy_* file.
+    The frontend uses this to plot the REAL byte progress for in-flight
+    downloads (matched heuristically against the rows it knows are downloading).
+
+    Also opportunistically prunes anything older than 1 hour — orphan temp
+    files from failed downloads accumulate quickly with multi-GB transfers.
+    """
+    import tempfile, glob, time as _time
+    tmp_dir = tempfile.gettempdir()
+    out = []
+    cutoff_orphan = _time.time() - 3600  # 1h
+    pruned = 0
+    for path in glob.glob(str(Path(tmp_dir) / "megapy_*")):
+        try:
+            st = Path(path).stat()
+        except OSError:
+            continue
+        # Auto-prune ancient temp files (download long since failed/abandoned).
+        if st.st_mtime < cutoff_orphan:
+            try:
+                Path(path).unlink()
+                pruned += 1
+                continue
+            except OSError:
+                pass
+        out.append({
+            "name": Path(path).name,
+            "size": st.st_size,
+            "mtime": st.st_mtime,
+            "age_s": int(_time.time() - st.st_mtime),
+        })
+    out.sort(key=lambda x: x["mtime"])
+    return {"files": out, "pruned_orphans": pruned, "now": _time.time()}
+
+
+def action_cleanup_temp(args):
+    """Delete every /tmp/megapy_* file regardless of age.  Use sparingly —
+    will trash an in-flight download if you hit it during one.  Frontend
+    surfaces this as a Settings button."""
+    import tempfile, glob
+    tmp_dir = tempfile.gettempdir()
+    deleted = 0
+    bytes_freed = 0
+    for path in glob.glob(str(Path(tmp_dir) / "megapy_*")):
+        try:
+            sz = Path(path).stat().st_size
+            Path(path).unlink()
+            deleted += 1
+            bytes_freed += sz
+        except OSError:
+            continue
+    return {"deleted": deleted, "bytes_freed": bytes_freed}
+
+
+def action_preview(args):
+    """Recursively expand the selected paths and return a preview manifest:
+      { total_files, total_size, by_ext: {ext: {count, bytes}}, files: [{path, size, ext}] }
+    No download happens.  Used by the UI to show a confirm dialog before
+    committing to a multi-GB folder import.
+    """
+    paths = args.get("paths") or []
+    m = _get_mega()
+    files = _cached_get_files(m)
+    cache = {}
+
+    path_to_node = {}
+    for nid, n in files.items():
+        if n.get("t") in (0, 1):
+            p = _node_path(nid, files, cache)
+            path_to_node[p] = (nid, n)
+
+    out_files = []
+    for remote in paths:
+        if not remote.startswith("/"):
+            remote = "/" + remote
+        entry = path_to_node.get(remote)
+        if entry is None:
+            continue
+        nid, node = entry
+        leafs = _collect_files_under(files, nid, cache) if node.get("t") == 1 else [(remote, nid, node)]
+        for fp, _fnid, fnode in leafs:
+            sz = fnode.get("s") or 0
+            ext = fp.rsplit(".", 1)[-1].lower() if "." in fp else ""
+            out_files.append({"path": fp, "size": sz, "ext": ext})
+
+    by_ext = {}
+    for f in out_files:
+        bucket = by_ext.setdefault(f["ext"], {"count": 0, "bytes": 0})
+        bucket["count"] += 1
+        bucket["bytes"] += f["size"]
+
+    return {
+        "total_files": len(out_files),
+        "total_size": sum(f["size"] for f in out_files),
+        "by_ext": by_ext,
+        "files": out_files,
+    }
 
 
 ACTIONS = {
@@ -643,6 +1036,9 @@ ACTIONS = {
     "logout": action_logout,
     "list": action_list,
     "find": action_find,
+    "preview": action_preview,
+    "temp_progress": action_temp_progress,
+    "cleanup_temp": action_cleanup_temp,
     "download": action_download,
 }
 

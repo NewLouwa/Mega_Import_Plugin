@@ -82,8 +82,8 @@ Verification still owed (user-side, can't be done from this environment):
 
 ## Cross-References
 - [README.md](README.md)
+- [INSTALL.md](INSTALL.md)
 - [TECHNICAL.md](TECHNICAL.md)
-- Plan file: `C:\Users\Louis\.claude\plans\this-is-a-repo-synthetic-whistle.md`
 
 ## Changelog
 - v0.7.0 (2026-05-01) — Iteration 6: concurrent downloads (1-5 in-flight), in-flight progress counter, configurable concurrency

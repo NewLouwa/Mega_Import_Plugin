@@ -1,12 +1,12 @@
 id: mega_import
 name: MEGA Import
 metadata:
-  description: Import files from MEGA.nz directly into Stash
+  description: Browse and import files from MEGA.nz directly inside Stash. Tile-grid file explorer, per-folder cache, real-byte download progress, size-aware timeouts, post-import tag/performer/studio bulk-apply, optional gallery creation, Auto-Tag + Identify automation.
 version: 1.0.0
-date: "2024-03-22"
+date: "2026-05-02"
 requires: []
 files:
 - mega_import.yml
 - mega_import.js
 - mega_import.css
-- mega_import.py 
+- mega_import.py

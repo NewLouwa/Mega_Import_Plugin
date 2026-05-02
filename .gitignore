@@ -30,6 +30,18 @@ credentials*
 .megaCmd/
 megacmd_*.log
 
+# mega.py runtime state — contains session tokens / decrypted file tree.
+# These live in /tmp on the Stash host but never check them in if they leak here.
+.mega_session.json
+.mega_files_cache.json
+.mega_status.json
+.mega_active.json
+megapy_*
+
+# Built/distributable plugin archives
+*.zip
+*.tar.gz
+
 # IDE / OS
 .DS_Store
 .vscode/

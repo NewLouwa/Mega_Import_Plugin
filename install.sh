@@ -5,7 +5,7 @@
 #   ./install.sh /custom/stash/plugins        # explicit target dir
 #   STASH_HOST=user@host ./install.sh         # remote install over SSH (rsync)
 #   STASH_HOST=user@host STASH_PLUGINS=/var/lib/stash/plugins ./install.sh
-#   STASH_HOST=root@10.0.0.5 SSH_OPTS="-J root@jump.example:2222 -i ~/.ssh/id_ed25519" ./install.sh
+#   STASH_HOST=root@stash.example.org SSH_OPTS="-J root@jump.example:2222 -i ~/.ssh/id_ed25519" ./install.sh
 #
 # Env vars:
 #   STASH_HOST     — user@host for remote install (rsync over SSH)

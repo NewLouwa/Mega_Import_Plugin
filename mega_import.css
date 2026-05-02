@@ -140,9 +140,10 @@
 
 /* MEGA Browser Page Styles */
 .mega-browser-page {
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
+  color: #e8eaed;
 }
 
 .mega-browser-header {
@@ -151,8 +152,11 @@
   align-items: center;
   margin-bottom: 20px;
   padding-bottom: 15px;
-  border-bottom: 1px solid #dee2e6;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
+
+.mega-browser-page .title-with-logo h2 { color: #e8eaed; }
+.mega-browser-page .mega-empty-state { color: #94a3ad; grid-column: 1 / -1; }
 
 .title-with-logo {
   display: flex;
@@ -185,37 +189,211 @@
   margin-bottom: 10px;
 }
 
+/* Breadcrumbs */
+.mega-breadcrumbs {
+  padding: 8px 12px;
+  background-color: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.mega-crumb {
+  color: #d9272e;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  transition: background-color 0.15s;
+}
+
+.mega-crumb:hover {
+  background-color: rgba(217, 39, 46, 0.15);
+  text-decoration: underline;
+}
+
+.mega-crumb-current {
+  color: inherit;
+  cursor: default;
+  font-weight: 600;
+}
+
+.mega-crumb-current:hover {
+  background-color: transparent;
+  text-decoration: none;
+}
+
+.mega-crumb-sep {
+  color: #888;
+  user-select: none;
+}
+
+.mega-crumb-counts {
+  margin-left: auto;
+  color: #888;
+  font-size: 12px;
+}
+
+.mega-stale-badge {
+  margin-left: 12px;
+  font-size: 12px;
+  color: #ffc107;
+  font-style: italic;
+}
+
 .files-container {
   flex: 1;
   overflow-y: auto;
-  border: 1px solid #dee2e6;
-  border-radius: 4px;
-  padding: 8px;
-  background-color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 12px;
+  /* Slightly lighter than Stash's main background (#202b33) so it reads as a panel. */
+  background-color: #1a242c;
+  color: #e8eaed;
   min-height: 400px;
+}
+
+/* ---------- Tile grid (file-explorer-style) ---------- */
+.mega-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.mega-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 14px 10px 10px;
+  border-radius: 6px;
+  background-color: #232f38;       /* tile face — close to navbar tone */
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s, transform 0.05s;
+  color: #e8eaed;
+  user-select: none;
+  min-height: 130px;
+}
+
+.mega-tile:hover {
+  background-color: #2a3942;
+  border-color: rgba(217, 39, 46, 0.5);
+}
+
+.mega-tile:active { transform: scale(0.98); }
+
+.mega-tile.selected {
+  background-color: rgba(217, 39, 46, 0.18);
+  border-color: #d9272e;
+}
+
+.mega-tile.imported {
+  box-shadow: inset 3px 0 0 #28a745;
+}
+
+.mega-tile-up {
+  background-color: rgba(255, 255, 255, 0.03);
+  border-style: dashed;
+}
+
+.mega-tile-icon {
+  font-size: 42px !important;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+
+.mega-tile-folder .mega-tile-icon { color: #ffc107; }
+.mega-tile-file   .mega-tile-icon { color: #8aa4b6; }
+
+.mega-tile-name {
+  font-size: 13px;
+  line-height: 1.3;
+  word-break: break-all;
+  width: 100%;
+  color: #e8eaed;
+  font-weight: 500;
+  cursor: text;
+}
+
+/* Truncate long names to 2 lines + ellipsis; click to expand. */
+.mega-tile-name.truncated {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mega-tile-name.expanded {
+  white-space: normal;
+  overflow: visible;
+}
+
+.mega-tile-meta {
+  font-size: 11px;
+  color: #94a3ad;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mega-tile-path {
+  font-size: 10px;
+  color: #6c757d;
+  margin-top: 4px;
+  font-family: monospace;
+  word-break: break-all;
+  width: 100%;
+}
+
+.mega-tile-check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.mega-tile-check input { cursor: pointer; }
+
+.mega-tile-imported {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  color: #28a745;
+  font-size: 14px;
 }
 
 .file-item {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 10px 14px;
   border-radius: 4px;
   cursor: pointer;
-  margin-bottom: 4px;
-  transition: background-color 0.2s;
+  margin-bottom: 2px;
+  transition: background-color 0.15s;
+  border: 1px solid transparent;
 }
 
 .file-item:hover {
-  background-color: #f1f1f1;
+  background-color: rgba(217, 39, 46, 0.08);
+  border-color: rgba(217, 39, 46, 0.2);
 }
 
 .file-item.selected {
-  background-color: #e3f2fd;
+  background-color: rgba(217, 39, 46, 0.18);
+  border-color: rgba(217, 39, 46, 0.4);
 }
 
 .file-item svg {
-  margin-right: 10px;
-  color: #666;
+  margin-right: 12px;
+  font-size: 18px;
+  flex-shrink: 0;
 }
 
 .file-item svg[data-icon="folder"] {
@@ -224,6 +402,11 @@
 
 .file-item svg[data-icon="file"] {
   color: #6c757d;
+}
+
+/* Folder rows pop a bit more — that's where the user navigates */
+.file-item:has(svg[data-icon="folder"]) .file-name {
+  font-weight: 500;
 }
 
 .file-name {
@@ -235,6 +418,22 @@
   font-size: 12px;
   color: #6c757d;
   margin-right: 15px;
+}
+
+.file-meta {
+  font-size: 12px;
+  color: #888;
+  margin-right: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mega-load-more {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 16px 0;
+  border-top: 1px dashed rgba(255,255,255,0.1);
+  margin-top: 8px;
 }
 
 .selection-info {
@@ -268,15 +467,33 @@
 /* Settings panel */
 .mega-settings-panel {
   padding: 16px;
-  border: 1px solid #dee2e6;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
-  background-color: #f8f9fa;
+  background-color: #1a242c;
+  color: #e8eaed;
 }
 
 .mega-settings-panel h5 {
   margin-top: 0;
   margin-bottom: 12px;
+  color: #e8eaed;
 }
+
+.mega-settings-group {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3ad;
+  margin-top: 18px;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mega-settings-panel .form-label { color: #c4ccd3; font-size: 13px; }
+.mega-settings-panel .form-text { color: #94a3ad !important; }
+.mega-settings-panel .form-check-label { color: #e8eaed; }
 
 /* Empty state */
 .mega-empty-state {
@@ -309,9 +526,10 @@
 /* History panel */
 .mega-history-panel {
   padding: 16px;
-  border: 1px solid #dee2e6;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
-  background-color: #f8f9fa;
+  background-color: #1a242c;
+  color: #e8eaed;
 }
 
 .mega-history-list {
@@ -353,9 +571,10 @@
 /* Import progress */
 .mega-progress {
   padding: 12px 16px;
-  border: 1px solid #dee2e6;
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
-  background-color: #f8f9fa;
+  background-color: #1a242c;
+  color: #e8eaed;
 }
 
 .mega-progress-label {
@@ -373,7 +592,7 @@
 }
 
 .mega-progress-bar-outer {
-  background-color: #e9ecef;
+  background-color: rgba(255, 255, 255, 0.08);
   border-radius: 4px;
   height: 8px;
   overflow: hidden;
@@ -385,29 +604,248 @@
   transition: width 0.2s ease-out;
 }
 
-/* Results Tab Styles */
-.import-results {
-  padding: 15px;
-}
-
-.result-summary {
-  background-color: #d4edda;
-  color: #155724;
-  padding: 10px;
-  border-radius: 4px;
-}
-
-.result-details {
-  margin-top: 15px;
-  background-color: #f8f9fa;
-  padding: 10px;
-  border-radius: 4px;
-  max-height: 300px;
+/* Per-file rows — scrollable list (caps at ~5 visible rows) */
+.mega-progress-rows {
+  margin-top: 12px;
+  max-height: 180px;        /* ~5 rows of 32px + a touch of padding */
   overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  background-color: rgba(0, 0, 0, 0.18);
 }
 
-.result-details pre {
+.mega-progress-row {
+  display: grid;
+  /* icon | path | progress bar | xx/yy size | status */
+  grid-template-columns: 18px minmax(0, 1fr) 140px 110px 130px;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  line-height: 1.3;
+}
+
+.mega-progress-row-bar-outer {
+  height: 6px;
+  background-color: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.mega-progress-row-bar-inner {
+  height: 100%;
+  background-color: #d9272e;            /* MEGA red — matches the global progress bar */
+  transition: width 0.4s ease-out;
+}
+
+.mega-progress-row-ok .mega-progress-row-bar-inner   { background-color: #28a745; }
+.mega-progress-row-err .mega-progress-row-bar-inner  { background-color: #dc3545; }
+
+.mega-progress-row-size {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: #94a3ad;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.mega-progress-row:last-child { border-bottom: none; }
+
+.mega-progress-row svg { font-size: 13px; }
+
+.mega-progress-row-path {
+  font-family: monospace;
+  color: #c4ccd3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mega-progress-row-status {
+  text-align: right;
+  font-size: 12px;
+  color: #94a3ad;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mega-progress-row-downloading svg     { color: #ffc107; }
+.mega-progress-row-downloading .mega-progress-row-status { color: #ffc107; }
+.mega-progress-row-ok svg              { color: #28a745; }
+.mega-progress-row-ok .mega-progress-row-status         { color: #28a745; }
+.mega-progress-row-err svg             { color: #dc3545; }
+.mega-progress-row-err .mega-progress-row-status        { color: #f8b6bb; }
+.mega-progress-row-pending svg         { color: #6c757d; }
+
+/* ---------- Folder import preview modal ---------- */
+.mega-preview-summary { font-size: 14px; }
+
+.mega-preview-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 720px) {
+  .mega-preview-meta-grid { grid-template-columns: 1fr; }
+}
+
+.mega-preview-meta-grid code {
+  background-color: rgba(255,255,255,0.06);
+  color: #ffc107;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.mega-preview-ext-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mega-preview-ext-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 14px;
+  background-color: rgba(217, 39, 46, 0.15);
+  border: 1px solid rgba(217, 39, 46, 0.4);
+  cursor: pointer;
+  font-size: 12px;
   margin: 0;
+}
+
+.mega-preview-ext-pill.excluded {
+  background-color: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #6c757d;
+  text-decoration: line-through;
+}
+
+.mega-preview-ext-pill input { margin: 0; }
+.mega-preview-ext-pill .ext-name { font-weight: 600; font-family: monospace; }
+.mega-preview-ext-pill .ext-count { font-variant-numeric: tabular-nums; }
+.mega-preview-ext-pill .ext-bytes { color: #94a3ad; font-size: 11px; }
+
+.mega-preview-file-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+}
+
+.mega-preview-file-row {
+  display: grid;
+  grid-template-columns: 24px 1fr 80px;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 10px;
+  margin: 0;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+
+.mega-preview-file-row:last-child { border-bottom: none; }
+.mega-preview-file-row.excluded { opacity: 0.5; text-decoration: line-through; }
+
+.preview-file-path {
+  font-family: monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #c4ccd3;
+}
+
+.preview-file-size {
+  text-align: right;
+  color: #94a3ad;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Results panel (dark, row-based) ---------- */
+.mega-results-panel {
+  background-color: #1a242c;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 14px 16px;
+  color: #e8eaed;
+}
+
+.mega-results-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.mega-results-dest {
+  font-size: 12px;
+  color: #94a3ad;
+  margin-bottom: 10px;
+}
+
+.mega-results-dest code {
+  background-color: rgba(255, 255, 255, 0.06);
+  color: #ffc107;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.mega-results-list {
+  max-height: 400px;
+  overflow-y: auto;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mega-results-row {
+  display: grid;
+  grid-template-columns: 28px 1fr 2fr;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 13px;
+}
+
+.mega-results-row:last-child { border-bottom: none; }
+
+.mega-results-status {
+  text-align: center;
+  font-weight: bold;
+  font-size: 16px;
+}
+
+.mega-results-row.ok .mega-results-status   { color: #28a745; }
+.mega-results-row.err .mega-results-status  { color: #dc3545; }
+
+.mega-results-name {
+  font-family: monospace;
+  word-break: break-all;
+  color: #e8eaed;
+}
+
+.mega-results-detail {
+  color: #94a3ad;
+  font-size: 12px;
+  word-break: break-word;
+}
+
+.mega-results-row.err .mega-results-detail { color: #f8b6bb; }
+
+/* Selection info — dark */
+.selection-info {
+  padding: 8px 12px;
+  background-color: rgba(217, 39, 46, 0.15);
+  border: 1px solid rgba(217, 39, 46, 0.3);
+  color: #e8eaed;
+  border-radius: 4px;
   font-size: 13px;
 }
 
