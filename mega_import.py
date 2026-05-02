@@ -848,6 +848,10 @@ def _slugify_filename(name):
 def action_download(args):
     paths = args.get("paths") or []
     dest = args.get("dest") or DEFAULT_DEST
+    # Optional override: caller-supplied filename to save the file as.
+    # If present, applies ONLY when `paths` has exactly one entry (the JS bridge
+    # always sends one path per download call).  Slugified before use.
+    forced_name = args.get("dest_filename")
     dest_path = Path(dest).expanduser().resolve()
     dest_path.mkdir(parents=True, exist_ok=True)
 
@@ -878,7 +882,13 @@ def action_download(args):
         )
         for file_path, file_nid, file_node in to_download:
             raw_fname = (file_node.get("a") or {}).get("n", "download")
-            fname = _slugify_filename(raw_fname)
+            # Caller-supplied name wins (used by the "rename from folder" toggle
+            # in the preview modal). Single-file calls only — for recursive
+            # folder downloads the override doesn't make sense.
+            if forced_name and len(paths) == 1 and node.get("t") == 0:
+                fname = _slugify_filename(forced_name)
+            else:
+                fname = _slugify_filename(raw_fname)
             expected_size = file_node.get("s")
             target_file = dest_path / fname
             print(f"[mega-import] downloading {file_path!r} → {target_file} (raw={raw_fname!r}, size={expected_size})", file=sys.stderr)

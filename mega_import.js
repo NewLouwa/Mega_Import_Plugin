@@ -603,7 +603,9 @@
       const options = opts || {};
       // Normalize: accept either ["a/b/c.jpg"] or [{path:"a/b/c.jpg", size:12345}].
       // Size is used to compute a per-file timeout (slow connection-tolerant).
-      const items = paths.map(p => typeof p === "string" ? { path: p, size: undefined } : { path: p.path, size: p.size });
+      const items = paths.map(p => typeof p === "string"
+        ? { path: p, size: undefined, destFilename: undefined }
+        : { path: p.path, size: p.size, destFilename: p.destFilename });
       const total = items.length;
       const conc = Math.max(1, Math.min(concurrency || 1, MAX_CONCURRENCY));
       const allItems = [];
@@ -615,6 +617,7 @@
       const downloadOne = async (item) => {
         const taskArgs = { paths: [item.path] };
         if (destOverride) taskArgs.dest = destOverride;
+        if (item.destFilename) taskArgs.dest_filename = item.destFilename;
         try {
           // Pass size hint so _runTask scales the timeout (≥2 min, ~1s per 200KB).
           const resp = await this._runTask("download", taskArgs, item.size);
@@ -1367,7 +1370,7 @@
           : "Nothing to import");
         return;
       }
-      if (skipped > 0) toast.info(`Skipping ${skipped} already-imported item(s)`);
+      if (skipped > 0) toast.success(`Skipping ${skipped} already-imported item(s)`);
 
       setIsLoading(true);
       setErrorMsg(null);
@@ -1420,11 +1423,11 @@
         if (r.cancelled) toast.error(`Cancelled — ${r.imported} of ${items.length} imported`);
         else if (failed > 0) toast.error(`${r.imported} imported, ${failed} failed`);
         else toast.success(`Imported ${r.imported} item(s) → ${r.dest || "default folder"}`);
-        if (r.libraryAdded) toast.info(`Added ${r.dest} to Stash library paths`);
+        if (r.libraryAdded) toast.success(`Added ${r.dest} to Stash library paths`);
         if (r.libraryError) toast.error(`Couldn't auto-add to library: ${r.libraryError}`);
         if (r.scanError) toast.error(`Scan trigger failed: ${r.scanError}`);
-        if (r.autoTagJob) toast.info(`Auto-Tag job queued (${r.autoTagJob})`);
-        if (r.identifyJob) toast.info(`Identify (TPDB+StashDB) job queued (${r.identifyJob})`);
+        if (r.autoTagJob) toast.success(`Auto-Tag job queued (${r.autoTagJob})`);
+        if (r.identifyJob) toast.success(`Identify (TPDB+StashDB) job queued (${r.identifyJob})`);
 
         // Apply user-chosen post-import metadata (tags / performers / studio / gallery).
         // Done in the foreground after the scan job is queued so newly-scanned items
@@ -1496,12 +1499,19 @@
       setPreviewState({
         loading: true, manifest: null,
         excluded: new Set(), excludeExts: new Set(),
+        // Track which selected folders are in scope so the renamer can find
+        // each file's "main folder" (its closest selected-folder ancestor).
+        selectedFolders: selectedItems.filter(p => {
+          const node = files.find(f => f.path === p);
+          return node && node.type === "folder";
+        }),
         post: {
           tagsText: "",
           performersText: (parsed.performers || []).join(", "),
           studioText: parsed.studio || "",
           galleryTitle: parsed.title || folderLeaf || "",
-          makeGallery: false,    // user opts in
+          makeGallery: false,
+          renameFromFolder: false,
           parsedHints: parsed,
         },
       });
@@ -1521,11 +1531,51 @@
       const excluded = previewState.excluded;
       const excludeExts = previewState.excludeExts;
       // Pass {path, size} so each per-file download gets a size-scaled timeout.
-      const finalItems = allFiles
+      let finalItems = allFiles
         .filter(f => !excluded.has(f.path))
         .filter(f => !excludeExts.has(f.ext))
         .map(f => ({ path: f.path, size: f.size }));
       const post = previewState.post || {};
+
+      // Optional folder-based rename:
+      //   <mainfolder>_<sub1>_<sub2>_..._<NUM>.<ext>
+      // where <mainfolder> is the leaf name of the closest selected folder
+      // that is an ancestor of this file's path, and <NUM> is a per-prefix
+      // counter so files in the same sub-tree get sequential numbers.
+      if (post.renameFromFolder) {
+        // Sort by selected-folder length DESC so deeper selections win when nested.
+        const folders = (previewState.selectedFolders || [])
+          .slice()
+          .sort((a, b) => b.length - a.length);
+        const counters = {};
+
+        // Stable sort by path so numbering is deterministic.
+        finalItems.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+
+        finalItems = finalItems.map(item => {
+          // Find the deepest selected folder that is an ancestor.
+          const root = folders.find(fp =>
+            item.path === fp || item.path.startsWith(fp.endsWith("/") ? fp : fp + "/")
+          );
+          if (!root) return item;
+          const mainFolderLeaf = (root.split("/").filter(Boolean).pop() || "folder");
+          // Path relative to that selected folder.
+          let rel = item.path.slice(root.length).replace(/^\/+/, "");
+          // rel = "[<subdirs/>]<filename.ext>"
+          const lastSlash = rel.lastIndexOf("/");
+          const subdirParts = lastSlash >= 0 ? rel.slice(0, lastSlash).split("/").filter(Boolean) : [];
+          const leaf = lastSlash >= 0 ? rel.slice(lastSlash + 1) : rel;
+          const dot = leaf.lastIndexOf(".");
+          const ext = dot > 0 ? leaf.slice(dot + 1) : "";
+          // Build prefix: mainfolder + each sub-dir, joined by underscore.
+          const prefix = [mainFolderLeaf, ...subdirParts].join("_");
+          counters[prefix] = (counters[prefix] || 0) + 1;
+          const num = String(counters[prefix]).padStart(3, "0");
+          const newName = ext ? `${prefix}_${num}.${ext}` : `${prefix}_${num}`;
+          return { ...item, destFilename: newName };
+        });
+      }
+
       const postActions = {
         tags: (post.tagsText || "").split(",").map(s => s.trim()).filter(Boolean),
         performers: (post.performersText || "").split(",").map(s => s.trim()).filter(Boolean),
@@ -1540,7 +1590,7 @@
     const cancelImport = () => {
       if (abortRef.current) {
         abortRef.current.abort();
-        toast.info("Cancelling after current file…");
+        toast.success("Cancelling after current file…");
       }
     };
 
@@ -2311,13 +2361,26 @@
                     ),
                     React.createElement(
                       "div",
-                      { className: "d-flex align-items-center gap-2 mt-2" },
+                      { className: "d-flex flex-column gap-2 mt-2" },
                       React.createElement(Form.Check, {
                         type: "switch", id: "mega-preview-make-gallery",
                         label: "Create a gallery from imported images",
                         checked: !!(previewState.post && previewState.post.makeGallery),
                         onChange: (e) => setPreviewState(prev => ({ ...prev, post: { ...prev.post, makeGallery: e.target.checked } })),
-                      })
+                      }),
+                      React.createElement(Form.Check, {
+                        type: "switch", id: "mega-preview-rename-from-folder",
+                        label: "Rename files from folder name (e.g. MainFolder_SubFolder_001.mp4)",
+                        checked: !!(previewState.post && previewState.post.renameFromFolder),
+                        onChange: (e) => setPreviewState(prev => ({ ...prev, post: { ...prev.post, renameFromFolder: e.target.checked } })),
+                      }),
+                      previewState.post && previewState.post.renameFromFolder && React.createElement(
+                        "div",
+                        { className: "small text-muted ml-4" },
+                        "Pattern: ",
+                        React.createElement("code", null, "<mainFolder>_<subFolder>_<NUM>.<ext>"),
+                        " — original MEGA filenames are discarded. NUM is per-subfolder, zero-padded to 3 digits."
+                      )
                     ),
                     previewState.post && previewState.post.makeGallery && React.createElement(
                       Form.Group,
