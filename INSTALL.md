@@ -189,6 +189,7 @@ These were considered and explicitly **not** shipped in v1:
 | **Search filters: by size, by date, by extension globally** | Current "Search" is just `mega-find` with a glob pattern. Useful enhancement. | S |
 | **Browser-side download (no server)** | Out of scope: Stash needs the bytes on its filesystem to scan them, so server-side is correct. | — |
 | **Native progress callbacks via mega.py fork** | Same as above; would unlock real chunk-level progress without filesystem polling. | L |
+| **Pure-JS rewrite — drop the Python backend entirely** | Use [`megajs`](https://github.com/qgustavor/mega) in the browser + a service worker / WebStream to push downloaded bytes to Stash via a small upload endpoint (or use a Stash plugin task purely as a write-to-disk bridge). Eliminates the Python interpreter dependency, the `pycrypto`/`pycryptodome` mess, and the Hashcash thread pool. Trade-off: browser tab must stay open during downloads, and the bytes round-trip through the user's bandwidth (browser → Stash). Worth it on small-account installs; bad for multi-TB. | XL |
 
 ## Architecture quick-reference
 
