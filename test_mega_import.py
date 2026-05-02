@@ -53,10 +53,21 @@ def _fake_files():
 # ---------------------------------------------------------------------------
 
 class SessionTokenTests(unittest.TestCase):
-    def test_roundtrip(self):
+    def test_roundtrip_bytes(self):
+        """bytes master_key (all values 0-255) round-trips back as bytes."""
         import mega_import
         sid = "abc123session"
         mk = bytes(range(16))
+        token = mega_import._session_to_token(sid, mk)
+        sid2, mk2 = mega_import._token_to_session(token)
+        self.assertEqual(sid, sid2)
+        self.assertEqual(mk, mk2)
+
+    def test_roundtrip_uint32_list(self):
+        """mega.py's uint32-list master_key round-trips back as a list."""
+        import mega_import
+        sid = "test_sid"
+        mk = [839131258, 831372324, 2413830786, 1183591628]  # real mega.py format
         token = mega_import._session_to_token(sid, mk)
         sid2, mk2 = mega_import._token_to_session(token)
         self.assertEqual(sid, sid2)

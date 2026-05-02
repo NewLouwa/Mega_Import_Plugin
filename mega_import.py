@@ -306,20 +306,44 @@ class MegaError(Exception):
 # ---------------------------------------------------------------------------
 
 def _session_to_token(sid, master_key):
-    """Encode session credentials as a portable base64 token string."""
-    data = {"sid": sid, "mk": list(master_key) if master_key else []}
+    """Encode session credentials as a portable base64 token string.
+
+    mega.py stores master_key as a list of 4 × uint32 (its internal AES
+    key format), NOT as raw bytes.  We store exactly that list so the
+    restored value can be handed back to mega.py without conversion.
+    """
+    if master_key is None:
+        mk_serialised = []
+    elif isinstance(master_key, (bytes, bytearray)):
+        # Rare: caller passed raw bytes → store as plain byte list (all 0-255).
+        mk_serialised = list(master_key)
+    else:
+        # Normal path: mega.py's list-of-uint32.
+        mk_serialised = list(master_key)
+    data = {"sid": sid, "mk": mk_serialised}
     return base64.b64encode(json.dumps(data, separators=(",", ":")).encode()).decode()
 
 
 def _token_to_session(token):
-    """Decode a session token back to (sid, master_key_bytes)."""
+    """Decode a session token back to (sid, master_key).
+
+    master_key is returned in whatever format was stored — typically a
+    list of uint32 as produced by mega.py's login(), which can be
+    assigned directly back to Mega().master_key.
+    """
     try:
         data = json.loads(base64.b64decode(token.encode()).decode())
         sid = data.get("sid") or ""
-        mk_list = data.get("mk") or []
+        mk_raw = data.get("mk") or []
         if not sid:
             raise ValueError("empty sid")
-        return sid, bytes(mk_list) if mk_list else None
+        # Detect format: if all values fit in a byte we stored raw bytes,
+        # otherwise we stored mega.py's uint32 list — return it as-is.
+        if mk_raw and max(mk_raw) <= 255:
+            master_key = bytes(mk_raw)
+        else:
+            master_key = mk_raw or None
+        return sid, master_key
     except Exception as e:
         raise MegaError(f"Invalid session token: {e}", code="bad_token")
 
