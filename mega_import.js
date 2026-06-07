@@ -416,7 +416,7 @@
     // Run a backend action via runPluginOperation (Stash v0.25+).
     // Synchronous: one GraphQL round-trip, no polling.
     // Python "output" → resolved value; Python "error" → GraphQL error → rejected promise.
-    async _runTask(action, args, sizeHint) {
+    async _runTask(action, args, sizeHint, opts) {
       // ApolloCapture sets _client in a useEffect; on a direct reload to
       // /mega-browser the page can mount before that fires. Short grace period.
       const waitDeadline = Date.now() + 3000;
@@ -430,19 +430,24 @@
       console.log(`[mega-import] _runTask → action=${action}`, argsMap);
       const t0 = Date.now();
 
-      const TIMEOUT_MS = this._timeoutMs(action, sizeHint);
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(`Backend timed out after ${Math.round(TIMEOUT_MS / 1000)}s (action=${action}${sizeHint ? `, size=${Math.round(sizeHint/1e6)}MB` : ""})`)), TIMEOUT_MS)
-      );
+      // opts.timeoutMs overrides the per-action default; <= 0 disables the
+      // wall-clock timeout entirely (downloads use a stall guard instead).
+      const TIMEOUT_MS = (opts && typeof opts.timeoutMs === "number")
+        ? opts.timeoutMs : this._timeoutMs(action, sizeHint);
+      const racers = [
+        this._client.mutate({
+          mutation: RUN_OPERATION,
+          variables: { id: PLUGIN_ID, args: argsMap },
+        }),
+      ];
+      if (TIMEOUT_MS > 0 && Number.isFinite(TIMEOUT_MS)) {
+        racers.push(new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Backend timed out after ${Math.round(TIMEOUT_MS / 1000)}s (action=${action}${sizeHint ? `, size=${Math.round(sizeHint/1e6)}MB` : ""})`)), TIMEOUT_MS)
+        ));
+      }
 
       try {
-        const resp = await Promise.race([
-          this._client.mutate({
-            mutation: RUN_OPERATION,
-            variables: { id: PLUGIN_ID, args: argsMap },
-          }),
-          timeoutPromise,
-        ]);
+        const resp = await Promise.race(racers);
         const result = resp && resp.data && resp.data.runPluginOperation;
         console.log(`[mega-import] _runTask ← action=${action} in ${Date.now() - t0}ms`, result);
         return result;
@@ -454,6 +459,51 @@
         logError("runPluginOperation", e, { action });
         throw new Error(msg);
       }
+    },
+
+    // Download with a STALL guard instead of a fixed wall-clock timeout.
+    // As long as bytes keep arriving (the /tmp/megapy_* temp file grows) we
+    // never time out — a multi-GB file on a slow link can take many hours and
+    // that's fine. We only abort if NO new data arrives for STALL_MS (tunnel
+    // dropped / throttled to zero). The idle timer resets to 0 on every byte
+    // of progress. The backend keeps running past an abort and file-level
+    // resume skips already-complete files, so aborting is safe.
+    async _runDownload(taskArgs, sizeHint) {
+      const STALL_MS = 180_000;   // 3 min with zero new bytes ⇒ stalled
+      const POLL_MS = 5_000;
+      let settled = false;
+      const dl = this._runTask("download", taskArgs, sizeHint, { timeoutMs: 0 })
+        .finally(() => { settled = true; });
+
+      let lastBytes = -1;
+      let lastProgressAt = Date.now();
+      let pollFails = 0;
+      const stall = new Promise((_, reject) => {
+        const id = setInterval(async () => {
+          if (settled) { clearInterval(id); return; }
+          try {
+            const snap = await this._runTask("temp_progress", {}, undefined, { timeoutMs: 30_000 });
+            const total = ((snap && snap.files) || []).reduce((a, f) => a + (f.size || 0), 0);
+            pollFails = 0;
+            if (total !== lastBytes) {              // data moved (this file or rollover) → reset
+              lastBytes = total;
+              lastProgressAt = Date.now();
+            } else if (Date.now() - lastProgressAt > STALL_MS) {
+              clearInterval(id);
+              reject(new Error(`Download stalled — no data received for ${Math.round(STALL_MS / 1000)}s`));
+            }
+          } catch (e) {
+            // Losing temp_progress visibility shouldn't kill a healthy download;
+            // only give up if we've been blind for a long stretch.
+            if (++pollFails * POLL_MS > STALL_MS * 2) {
+              clearInterval(id);
+              reject(new Error("Download progress unreadable — aborting"));
+            }
+          }
+        }, POLL_MS);
+      });
+
+      return Promise.race([dl, stall]);
     },
 
     async login(email, password) {
@@ -657,8 +707,9 @@
         if (destOverride) taskArgs.dest = destOverride;
         if (item.destFilename) taskArgs.dest_filename = item.destFilename;
         try {
-          // Pass size hint so _runTask scales the timeout (≥2 min, ~1s per 200KB).
-          const resp = await this._runTask("download", taskArgs, item.size);
+          // Stall-guarded: no wall-clock timeout while bytes keep arriving;
+          // aborts only after a stretch of zero new data (see _runDownload).
+          const resp = await this._runDownload(taskArgs, item.size);
           if (resp.dest && !resolvedDest) resolvedDest = resp.dest;
           return (resp.items && resp.items[0]) || { path: item.path, status: "error", error: "no result" };
         } catch (e) {

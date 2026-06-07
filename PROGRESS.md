@@ -12,7 +12,7 @@ Local SQLite tree index — large-account browsing goes from seconds-per-click t
 - Tree caching moved from the flat-JSON `/tmp/.mega_files_cache.json` to `tempfile.gettempdir()/.mega_tree.sqlite`. `cleanup_temp` / re-login behaviour unchanged.
 - Session/tree files now use `tempfile.gettempdir()` instead of a hardcoded `/tmp` (works on Windows/macOS; still `/tmp` on Linux).
 - `list`/`find`/`preview` UI timeout raised 5 → 15 min so the one-time full-tree fetch+ingest (3-5 min on a large account) can't time the UI out mid-ingest.
-- `download` UI timeout cap raised 1 h → 6 h (and throughput estimate lowered to ~150 KB/s): a single multi-GB file on a throttled MEGA link genuinely takes hours; the old 1 h cap reported a false timeout ~as a 2.7 GB file finished. (The backend continues past a UI timeout, and file-level resume skips completed files on re-run.)
+- **`download` now uses a stall guard instead of a wall-clock timeout.** As long as bytes keep arriving (the `/tmp/megapy_*` temp file grows), the download never times out — a multi-GB file on a slow link can take hours. It aborts only after ~3 min of *zero* new data (tunnel dropped / throttled to zero); the idle timer resets to 0 on every byte of progress. (`_runTask` gained a `timeoutMs` override; download passes `0` to disable the fixed timeout.) Backend keeps running past an abort and file-level resume skips completed files, so aborting is safe.
 
 ### Fixed
 - **Disconnect button** could appear dead: `logout()` now clears local state immediately and runs the server-side cleanup in the background, and the browser page no longer re-pops the login modal the instant you disconnect.
