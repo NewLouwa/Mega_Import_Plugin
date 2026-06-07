@@ -47,6 +47,16 @@
     overwriteExisting: false,
   };
   const MAX_CONCURRENCY = 5;
+  // Maps a recorded import status to a human label + CSS class for the History
+  // "State" column.
+  const HISTORY_STATE = {
+    ok:          { label: "Done",        cls: "ok" },
+    error:       { label: "Failed",      cls: "err" },
+    paused:      { label: "Paused",      cls: "paused" },
+    cancelled:   { label: "Cancelled",   cls: "cancelled" },
+    downloading: { label: "Downloading", cls: "downloading" },
+    pending:     { label: "Queued",      cls: "pending" },
+  };
   const DEFAULT_HISTORY = { entries: [] }; // [{path, dest, status, ts}]
 
   // File-type filter groups. Backend returns no MIME — we filter on extension.
@@ -1224,13 +1234,18 @@
         : React.createElement(
             "div",
             { className: "mega-history-list" },
-            filtered.slice(0, 100).map((e, idx) => React.createElement(
-              "div",
-              { key: idx, className: `mega-history-row ${e.status === "ok" ? "ok" : "err"}` },
-              React.createElement("span", { className: "mega-history-time" }, fmtTime(e.ts)),
-              React.createElement("span", { className: "mega-history-path" }, e.path),
-              React.createElement("span", { className: "mega-history-status" }, e.status === "ok" ? "✓" : ("✗ " + (e.error || "failed")))
-            )),
+            filtered.slice(0, 100).map((e, idx) => {
+              const st = HISTORY_STATE[e.status] || { label: e.status || "unknown", cls: "err" };
+              return React.createElement(
+                "div",
+                { key: idx, className: `mega-history-row ${st.cls}` },
+                React.createElement("span", { className: "mega-history-time" }, fmtTime(e.ts)),
+                React.createElement("span", { className: "mega-history-path" }, e.path),
+                React.createElement("span", { className: `mega-history-state mega-state-${st.cls}` }, st.label),
+                React.createElement("span", { className: "mega-history-status", title: e.error || "" },
+                  e.status === "ok" ? "✓" : (e.error ? ("✗ " + e.error) : ""))
+              );
+            }),
             filtered.length > 100 && React.createElement("p", { className: "text-muted small mt-2" }, `(showing 100 of ${filtered.length})`)
           )
     );

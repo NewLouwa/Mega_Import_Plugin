@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.1 — 2026-06-07
+
+### Added
+- Import **History** now has a **State** column — a coloured chip showing each entry's state (Done / Failed / Paused / Cancelled / …), so paused and cancelled items are clearly distinguished rather than all looking like failures.
+
 ## v1.5.0 — 2026-06-07
 
 Per-file download controls: pause, resume, and cancel each file in the queue.

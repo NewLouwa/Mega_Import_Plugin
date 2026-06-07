@@ -556,13 +556,31 @@
 
 .mega-history-row {
   display: grid;
-  grid-template-columns: 160px 1fr 120px;
+  grid-template-columns: 160px 1fr 90px 120px;
   gap: 12px;
   padding: 6px 4px;
   border-bottom: 1px solid #e9ecef;
   font-size: 13px;
   align-items: center;
 }
+
+/* History "State" column — a small coloured chip per import state. */
+.mega-history-state {
+  justify-self: start;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  white-space: nowrap;
+  background: #2b3742;
+  color: #cdd6dd;
+}
+.mega-state-ok          { background: rgba(40,167,69,0.18);  color: #28a745; }
+.mega-state-err         { background: rgba(220,53,69,0.18);  color: #f0868f; }
+.mega-state-paused      { background: rgba(240,173,78,0.18); color: #f0ad4e; }
+.mega-state-cancelled   { background: rgba(108,117,125,0.2); color: #9aa4ad; }
+.mega-state-downloading { background: rgba(255,193,7,0.18);  color: #ffc107; }
+.mega-state-pending     { background: rgba(108,117,125,0.2); color: #9aa4ad; }
 
 .mega-history-row:last-child {
   border-bottom: none;
