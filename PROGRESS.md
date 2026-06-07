@@ -1,41 +1,33 @@
 # Changelog
 
-## v1.2.0 — Unreleased
+## v1.3.0 — 2026-06-07
 
-Local SQLite tree index — large-account browsing goes from seconds-per-click to milliseconds.
+Big reliability + scale release: large imports can't freeze the host or stop when you close the tab, and huge accounts browse instantly. Also verified on a native Windows Stash (Python 3.11), not just Alpine Docker.
 
 ### Added
-- **Background download queue (survives the browser).** Stash kills a plugin subprocess the moment the client disconnects, so a synchronous download died when you closed the tab. Imports now `enqueue` files to a JSON queue processed by a **detached worker process** (Windows `DETACHED_PROCESS`, POSIX `start_new_session`) that Stash can't kill — downloads keep running with the tab closed. When the queue drains, the worker registers the destination as a library path and triggers a scan via Stash's GraphQL (using the plugin's `server_connection`), so imports appear without the UI. New actions: `enqueue`, `queue_status`, `queue_clear`; the JS import flow enqueues then polls status. Metadata enrichment (auto-tag / identify / generate) still runs in the browser when it's open.
-- **SQLite tree index.** The full account tree is ingested **once** into a local SQLite file (keyed by `sid`, 24 h TTL) instead of a flat-JSON blob re-parsed on every call. Each list/find/download now answers from indexed queries that touch only the needed rows. Measured on a **724k-node / 12 TB** account: per-folder navigation **6.7 s → ~85 ms (root) / ~15 ms (subfolders)**, ~80×. Recursive folder sizes/counts are precomputed at ingest; search is an indexed `LIKE`; ingest is serialized across processes (flock) and published atomically (`.building` → `os.replace`). The MEGA API can't list a folder server-side (it sends the whole tree at once), so the one-time fetch is unchanged — but it's now paid far less often (`MEGA_TREE_TTL`, `MEGA_TREE_DB`).
-- 5 new backend unit tests for the index (ingest, resolve, children+aggregates, recursive collect, freshness) — 66 total.
+- **Background download queue (survives the browser).** Stash kills a plugin subprocess the moment the client disconnects (verified), so a synchronous download died when you closed the tab. Imports now `enqueue` files to a JSON queue processed by a **detached worker process** (Windows `DETACHED_PROCESS`/`CREATE_NEW_PROCESS_GROUP`, POSIX `start_new_session`) that Stash can't kill — downloads keep running with the tab closed. When the queue drains, the worker registers the destination as a library path and triggers a scan via Stash's GraphQL (using the plugin's `server_connection`), so imports appear without any UI. New actions: `enqueue`, `queue_status`, `queue_clear`; the JS import flow enqueues then polls status. Metadata enrichment (auto-tag / identify / generate) still runs in the browser when it's open.
+- **SQLite tree index.** The account tree is ingested **once** into a local SQLite file (keyed by `sid`, 24 h TTL) instead of a flat-JSON blob re-parsed on every call. Each list/find/download answers from indexed queries touching only the needed rows. Measured on a **724k-node / 12 TB** account: per-folder navigation **6.7 s → ~85 ms (root) / ~15 ms (subfolders)**, ~80×. Recursive folder sizes/counts precomputed at ingest; search is an indexed `LIKE`; ingest serialized across processes (flock) + atomic publish (`.building` → `os.replace`). The MEGA API can't list a folder server-side, so the one-time fetch is unchanged — just paid far less often (`MEGA_TREE_TTL`, `MEGA_TREE_DB`).
+- **Anti-NFS-saturation batch import.** When the destination is a network filesystem, downloads land in a **local staging dir** and are **published serialized + fsync-paced** (one cross-process writer via `fcntl.flock`, 16 MB chunks, `os.fdatasync` every 128 MB, atomic `.part` → `os.replace`). Bounds kernel dirty pages → no writeback burst → no iowait storm. Auto-detected from `/proc/mounts`; local-disk dests keep the direct fast path. POSIX-only primitives guarded so the module still runs on Windows/macOS. See [TECHNICAL.md](TECHNICAL.md) and `mega-import-batch-redesign.md`.
+- **Backpressure** so parallel downloads can't outrun the publisher and fill the local disk (`MEGA_MAX_STAGED_BYTES`, default 8 GB).
+- **File-level resume**: a complete file already at the destination (size matches) is skipped, so re-running an interrupted import is idempotent.
+- **Retry with exponential backoff** for transient download/publish failures (`MEGA_DOWNLOAD_RETRIES`, default 3).
+- **Persistent login + silent restore.** Session token stored in `localStorage` (was `sessionStorage`, wiped on tab close) and re-established server-side from the token on load — no re-prompt, no re-solving the PoW. Only prompts if the token is rejected; a fresh login replaces the token.
+- New env vars (see [TECHNICAL.md](TECHNICAL.md)): `MEGA_HASHCASH_THREADS`, `MEGA_DOWNLOAD_RETRIES`, `MEGA_STAGING`, `MEGA_STAGING_DIR`, `MEGA_MAX_STAGED_BYTES`, `MEGA_PUBLISH_CHUNK`, `MEGA_PUBLISH_FSYNC_EVERY`, `MEGA_PUBLISH_BWLIMIT`, `MEGA_TREE_TTL`, `MEGA_TREE_DB`, `MEGA_SESSION_FILE`, `MEGA_QUEUE_FILE`.
+- 12 new backend unit tests (staging decision, NFS detection, paced publish, SQLite index ingest/resolve/children/collect/freshness) — **66 total**.
 
 ### Changed
-- Tree caching moved from the flat-JSON `/tmp/.mega_files_cache.json` to `tempfile.gettempdir()/.mega_tree.sqlite`. `cleanup_temp` / re-login behaviour unchanged.
-- Session/tree files now use `tempfile.gettempdir()` instead of a hardcoded `/tmp` (works on Windows/macOS; still `/tmp` on Linux).
-- `list`/`find`/`preview` UI timeout raised 5 → 15 min so the one-time full-tree fetch+ingest (3-5 min on a large account) can't time the UI out mid-ingest.
-- **`download` now uses a stall guard instead of a wall-clock timeout.** As long as bytes keep arriving (the `/tmp/megapy_*` temp file grows), the download never times out — a multi-GB file on a slow link can take hours. It aborts only after ~3 min of *zero* new data (tunnel dropped / throttled to zero); the idle timer resets to 0 on every byte of progress. (`_runTask` gained a `timeoutMs` override; download passes `0` to disable the fixed timeout.) Backend keeps running past an abort and file-level resume skips completed files, so aborting is safe.
+- **`download` uses a stall guard instead of a wall-clock timeout.** As long as bytes keep arriving, the download never times out — a multi-GB file on a slow link can take hours. It aborts only after ~3 min of *zero* new data (tunnel dropped / throttled to zero); the idle timer resets on every byte. (`_runTask` gained a `timeoutMs` override.) Backend keeps running past an abort + resume, so aborting is safe.
+- **Default download concurrency 3 → 1** (safe for NFS dests; writes are serialized regardless). `MAX_CONCURRENCY` stays 5.
+- **Hashcash PoW solver uses all logical CPUs** (was capped at 8) + logs solve time/threads; stderr is line-buffered so progress shows live.
+- `list`/`find`/`preview` UI timeout 5 → 15 min so the one-time tree fetch+ingest can't time the UI out mid-ingest.
+- Server-side state files use `tempfile.gettempdir()` instead of a hardcoded `/tmp` (works on Windows/macOS; still `/tmp` on Linux). Tree cache moved from flat JSON to SQLite.
+- `cleanup_temp` also clears staged-but-unpublished orphans.
 
 ### Fixed
-- **Disconnect button** could appear dead: `logout()` now clears local state immediately and runs the server-side cleanup in the background, and the browser page no longer re-pops the login modal the instant you disconnect.
-- **Non-ASCII paths** (emoji/accented folder names, e.g. `🔞 SiteRip`) returned "Path not found": stdin is now read as UTF-8 instead of the Windows locale codec (cp1252), which had mangled the path before the DB lookup.
-- **Emoji rendered as tofu boxes**: the plugin now uses an emoji-capable font stack (Segoe UI Emoji / Apple Color Emoji / Noto Color Emoji), including a fallback appended to the `monospace` path/pill text. System fonts only — no download, offline-safe, scoped to the plugin.
-
-## v1.1.0 — Unreleased
-
-Batch-import hardening: a large import can no longer freeze an NFS-backed host.
-
-### Added
-- **Anti-NFS-saturation batch import.** When the destination is a network filesystem, downloads now land in a **local staging dir** and are **published to the dest serialized + fsync-paced** (one cross-process writer via `fcntl.flock`, 16 MB chunks, `os.fdatasync` every 128 MB, atomic `.part` → `os.replace`). Bounds kernel dirty pages → no writeback burst → no iowait storm. Auto-detected from `/proc/mounts`; local-disk dests keep the original direct fast path. POSIX-only primitives are guarded so the module still runs on Windows/macOS. See [TECHNICAL.md](TECHNICAL.md) and `mega-import-batch-redesign.md`.
-- **Backpressure** so parallel downloads can't outrun the publisher and fill the local disk (`MEGA_MAX_STAGED_BYTES`, default 8 GB).
-- Download **file-level resume**: a complete file already at the destination (size matches) is skipped, so re-running an interrupted multi-file import is idempotent and cheap.
-- Download **retry with exponential backoff** for transient failures (`MEGA_DOWNLOAD_RETRIES`, default 3).
-- New env vars (see [TECHNICAL.md](TECHNICAL.md)): `MEGA_HASHCASH_THREADS`, `MEGA_DOWNLOAD_RETRIES`, `MEGA_STAGING`, `MEGA_STAGING_DIR`, `MEGA_MAX_STAGED_BYTES`, `MEGA_PUBLISH_CHUNK`, `MEGA_PUBLISH_FSYNC_EVERY`, `MEGA_PUBLISH_BWLIMIT`.
-- 7 new backend unit tests (staging decision, NFS detection, paced publish round-trip) — 61 total.
-
-### Changed
-- **Default download concurrency 3 → 1.** Safe out-of-the-box for NFS-backed dests; the backend serializes NFS writes regardless, so raising it again only affects download parallelism. `MAX_CONCURRENCY` stays 5.
-- Hashcash PoW solver now uses **all** logical CPUs instead of capping at 8 threads (override with `MEGA_HASHCASH_THREADS`); logs solve time + thread count to stderr. Cuts first-login wait on hosts with >8 cores.
-- `cleanup_temp` now also clears staged-but-unpublished orphans, not just `/tmp/megapy_*`.
+- **Non-ASCII paths** (emoji/accented folder names, e.g. `🔞 SiteRip`) returned "Path not found": stdin is now read as UTF-8 instead of the Windows locale codec (cp1252), which mangled the path before the DB lookup.
+- **Emoji rendered as tofu boxes**: emoji-capable font stack (Segoe UI Emoji / Apple Color Emoji / Noto Color Emoji), incl. a fallback on `monospace` text. System fonts only — offline-safe, scoped to the plugin.
+- **Session didn't persist on Windows/macOS**: the session file silently failed to save under a non-existent `C:\tmp`; now uses the real temp dir.
+- **Disconnect button** could appear dead: `logout()` clears local state immediately and runs server cleanup in the background; the page no longer re-pops the login modal the instant you disconnect.
 
 ## v1.0.0 — 2026-05-02
 

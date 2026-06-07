@@ -1,10 +1,10 @@
 # MEGA Import Plugin — Install & Operations Guide
 
-> ## ⚠ Status: tested on Alpine docker container only
+> ## ⚠ Status: tested on Alpine Docker + native Windows
 >
-> v1.0.0 has been developed and exercised against `stashapp/stash:latest` (Alpine, Python 3.12) running in Docker. **Other configurations (bare-metal, non-Alpine containers, Windows-host Stash, NixOS, etc.) are unverified.** It probably works — the plugin is pure Python + JS with no native deps beyond what `mega.py` and `pycryptodome` need — but you may need to adapt the install steps.
+> Developed and exercised against `stashapp/stash:latest` (Alpine, Python 3.12) in Docker, and also against a **native Windows Stash (`stash-win.exe` v0.31.1, Python 3.11)**. **Other configurations (bare-metal Linux, non-Alpine containers, macOS, NixOS, etc.) are unverified.** It should work — pure Python + JS, no native deps beyond what `mega.py` and `pycryptodome` need — but you may need to adapt the install steps. On Windows, point the plugin's `exec` at a real Python (not the Microsoft Store alias) and install the deps into it.
 >
-> The plugin is provided **as-is, with no warranty**. Test against a non-critical Stash instance first. Bug reports / PRs welcome via GitHub issues; please include your Stash version, the exact `python --version` of the runtime that runs the plugin, and any `[mega-import]` log lines from `docker logs stash`.
+> The plugin is provided **as-is, with no warranty**. Test against a non-critical Stash instance first. Bug reports / PRs welcome via GitHub issues; please include your Stash version, the exact `python --version` of the runtime that runs the plugin, and any `[mega-import]` log lines (`docker logs stash` on Docker, or the Stash log on bare installs).
 
 ## Prerequisites
 
@@ -134,15 +134,14 @@ Clear them via Settings panel buttons or `Disconnect`.
 | Action | Timeout |
 |---|---|
 | `login` | 10 min (Hashcash) |
-| `list` / `find` / `preview` | 5 min |
-| `download` (size known) | `max(2 min, 60s + size/200KB·s)` capped at 1 h |
-| `download` (size unknown) | 30 min |
+| `list` / `find` / `preview` | 15 min (covers the one-time tree fetch + index ingest) |
+| `download` | **no wall-clock timeout** — a stall guard aborts only after ~3 min of zero new bytes (see below) |
 
-If MEGA throttles you hard (free account hitting daily cap), bump the constant in `_timeoutMs` (currently `200_000` bytes/sec assumed).
+Downloads now run in the **background queue** (`enqueue`), and the UI polls `queue_status`. The download itself uses a *stall guard*, not a fixed timeout: it keeps running as long as the temp file is growing and aborts only after a stretch of no new data (tunnel dropped / MEGA throttled to zero). The detached worker survives a closed tab; file-level resume skips already-complete files on re-run.
 
 ### Concurrency
 
-Default 3 parallel downloads. Cap is 5 (constant `MAX_CONCURRENCY`). Lower it if your MEGA account is being throttled — fewer concurrent streams often means higher per-stream throughput.
+The background worker downloads **sequentially** (NFS-safe). The UI's `concurrency` setting (default 1, cap `MAX_CONCURRENCY = 5`) is retained for the legacy direct-download path; NFS writes are serialized server-side regardless.
 
 ## Debugging
 
@@ -171,21 +170,22 @@ DevTools console — every line prefixed `[mega-import]`. Includes: render with 
 python -m unittest test_mega_import
 ```
 
-54 tests, all should pass. Covers MEGA base64, Hashcash threshold, parse-header, `_gencash` (rebuilds the 12 MB buffer + verifies SHA-256), session token round-trip in both `bytes` and `uint32-list` shapes.
+66 tests, all should pass. Covers MEGA base64, Hashcash threshold, parse-header, `_gencash` (rebuilds the 12 MB buffer + verifies SHA-256), session token round-trip in both `bytes` and `uint32-list` shapes, the SQLite tree index (ingest/resolve/children/collect/freshness), NFS detection, and the fsync-paced publish.
 
 ## Roadmap (post-v1)
 
-These were considered and explicitly **not** shipped in v1:
+Shipped since v1.0.0 (see [PROGRESS.md](PROGRESS.md)): ✅ **background download queue** (detached worker survives a closed tab), ✅ **file-level resume**, ✅ **SQLite-indexed browsing**, ✅ **anti-NFS-saturation staging**, ✅ **stall-based download timeout**, ✅ **bandwidth cap** (`MEGA_PUBLISH_BWLIMIT`).
+
+Still deferred:
 
 | Feature | Why not yet | Effort |
 |---|---|---|
-| **Backend job-queue** so closing the browser tab doesn't pause the queue | Current flow uses synchronous `runPluginOperation`. Refactoring to `runPluginTask` + status polling is ~1 day of work. Workaround for now: keep the tab open. | M |
 | **Real per-file MEGA progress** (instead of temp-file size polling) | Would require monkey-patching `mega.py.download_file` to report chunk-level progress to a status file. Current polling is good enough; tilde marker (`~`) shows when bar is estimated vs measured. | M |
+| **Parallel downloads in the background worker** | The detached worker is sequential (NFS-safe). NFS writes are already serialized via the publish lock, so the worker could run N downloads in parallel; needs per-item progress + careful backpressure. | M |
+| **Incremental tree sync** | First browse fetches the full account tree (MEGA sends it all at once). MEGA exposes a sequence number (`sn`) for deltas; persisting the index and syncing only changes would avoid the periodic full fetch. | M |
 | **Group/series creation from a folder of scenes** | UI hook is in the preview modal but the plumbing isn't wired (Stash's `Group` entity needs explicit member ordering, which we'd have to infer from filenames). | S |
 | **LocalVisage face recognition** | Requires Python 3.10 + DeepFace + ~3 GB of ML deps; the official Stash Alpine image is on Python 3.12. Workaround: rebuild Stash on a `python:3.10-slim` Debian base (the LocalVisage repo ships a Dockerfile that does exactly this). Not part of this plugin. | L (new image, downtime) |
-| **Resumable downloads** | `mega.py` doesn't expose chunked resume. A failed multi-GB download has to start over. Could fork `mega.py` to fix. | L |
-| **Bandwidth limit / scheduled downloads** | Not built in. User can throttle at the firewall or via tc/iptables on the Stash host. | M |
-| **Multiple MEGA accounts** | Single `_session.json` slot. Would need account picker UI + per-account session storage. | M |
+| **Multiple MEGA accounts** | Single session slot. Would need account picker UI + per-account session storage. | M |
 | **Search filters: by size, by date, by extension globally** | Current "Search" is just `mega-find` with a glob pattern. Useful enhancement. | S |
 | **Browser-side download (no server)** | Out of scope: Stash needs the bytes on its filesystem to scan them, so server-side is correct. | — |
 | **Native progress callbacks via mega.py fork** | Same as above; would unlock real chunk-level progress without filesystem polling. | L |
@@ -202,22 +202,26 @@ Browser (mega_import.js)
               │
               ▼
 Stash → spawns Python subprocess → mega_import.py
-  ├── action_login        (with Hashcash PoW solver)
-  ├── action_list / find  (cached MEGA tree)
-  ├── action_preview      (folder expansion + by-ext stats)
-  ├── action_download     (mega.py → /tmp/megapy_* → dest)
-  ├── action_temp_progress (real-byte sampling for UI)
-  ├── action_cleanup_temp (prune orphans)
-  ├── action_logout
-  └── action_check / whoami
+  ├── action_login         (Hashcash PoW solver; session ← token)
+  ├── action_list / find   (SQLite tree index — indexed query)
+  ├── action_preview       (folder expansion + by-ext stats)
+  ├── action_enqueue       (expand → queue → spawn DETACHED worker) ──┐
+  ├── action_queue_status  (poll for UI progress)                     │
+  ├── action_queue_clear   (cancel pending)                           │
+  ├── action_download      (synchronous fallback: mega.py → dest)     │
+  ├── action_temp_progress / cleanup_temp / logout / check / whoami   │
+  └── __worker (detached, NOT killed on disconnect) ◄─────────────────┘
+        └── loop: claim pending → _download_one (stage→publish) → mark done
+            on drain → add library path + metadataScan (via server_connection)
 
-  ↳ writes JSON `{"output": …, "error": …}` to stdout
-  ↳ Stash returns it to the browser via runPluginOperation
+  ↳ request actions write JSON `{"output": …, "error": …}` to stdout
 ```
 
-State files (all in `/tmp` on the Stash host):
+State files (in the host temp dir; `/tmp` on Linux, `%TEMP%` on Windows):
 - `.mega_session.json` — `{sid, master_key}` (uint32 list or raw bytes)
 - `.mega_tree.sqlite` — full file tree, indexed (auto-expires after 24 h)
+- `mega_queue.json` (+ `.worker.log`) — background download queue + worker output
+- `mega_stage/` — local staging dir for NFS-safe publish (network dests only)
 - `megapy_*` — in-flight or orphaned downloads
 
 Browser localStorage:

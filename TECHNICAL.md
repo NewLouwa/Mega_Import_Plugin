@@ -45,20 +45,24 @@ or on failure:
 
 Stash returns `output` directly to the JS caller; `error` is converted to a GraphQL error.
 
-### Actions in v1.0.0
+### Actions
 
 | Action | Purpose |
 | --- | --- |
 | `check` | Returns `{version: "mega.py X.Y.Z"}` — sanity check |
 | `whoami` | Returns `{email: "..."}` if logged in, else `{email: null}` |
-| `login` (email/pass OR session_token) | Authenticates, writes `/tmp/.mega_session.json`, returns `{email, session_token}` |
+| `login` (email/pass OR session_token) | Authenticates, writes the session file, returns `{email, session_token}` |
 | `logout` | Clears the session file |
-| `list` `{path}` | Returns sorted children of a folder, with `child_count` and `total_size` for sub-folders |
-| `find` `{query, path?}` | Glob-pattern recursive search across the whole tree |
-| `preview` `{paths}` | Recursively expand paths, return `{total_files, total_size, by_ext, files[]}` for the preview modal |
-| `download` `{paths, dest?}` | Download files (single or many), with MAC-rescue, file-level resume, retry/backoff + slugified filenames |
-| `temp_progress` | Snapshot of `/tmp/megapy_*` files for real-byte progress UI |
-| `cleanup_temp` | Delete all `/tmp/megapy_*` (manual cleanup button) |
+| `list` `{path}` | Children of a folder (indexed query), with `child_count` and `total_size` for sub-folders |
+| `find` `{query, path?}` | Recursive name search (indexed `LIKE`) across the tree |
+| `preview` `{paths}` | Recursively expand paths → `{total_files, total_size, by_ext, files[]}` for the preview modal |
+| `download` `{paths, dest?}` | Synchronous download (single or many) — MAC-rescue, resume, retry/backoff, staging. Used directly; the UI prefers `enqueue` |
+| `enqueue` `{paths, dest?}` | Expand paths to files, append to the background queue, ensure the detached worker is running. Returns `{queued, ids, errors, worker_pid}` immediately |
+| `queue_status` | `{items[], counts, worker_alive, updated_at}` — polled by the UI |
+| `queue_clear` `{only_done?}` | Drop queued items (keeps the in-flight one; `only_done` keeps pending+downloading) |
+| `temp_progress` | Snapshot of `megapy_*` temp files for real-byte progress UI |
+| `cleanup_temp` | Delete all `megapy_*` temps + staging orphans (manual cleanup button) |
+| `__worker` (internal) | Entry point for the detached background worker — not called by the UI |
 
 ## Hashcash PoW
 
@@ -97,6 +101,19 @@ The MAC algorithm is buggy for many files — see [odwyersoftware/mega.py#61](ht
 - **File-level resume** — if a complete copy (size == `node["s"]`) already sits at the destination, the transfer is skipped and the row is marked `skipped`. mega.py downloads to a `/tmp` temp file and only moves on success, so a file at the destination is genuinely complete, never partial. Re-running an interrupted multi-file import is therefore cheap and idempotent.
 - **Retry with backoff** — transient failures (network blips, mega.py request errors, publish errors) are retried up to `MEGA_DOWNLOAD_RETRIES` times (default 3) with exponential backoff (1s, 2s, 4s, … capped at 15s). The MAC-rescue path counts as success and short-circuits the retries.
 
+## Background download queue (detached worker)
+
+Stash runs a plugin via `runPluginOperation` as a subprocess tied to the HTTP request context, and **kills it the moment the client disconnects** (verified empirically: a sleeping probe action stopped exactly when the browser request was aborted). So a synchronous download dies when the tab closes. Since Stash and the downloads run on the same host, the browser should only be a remote control.
+
+Flow:
+
+1. **`enqueue`** expands the requested paths to individual files (via the SQLite index), appends them to a queue JSON (`MEGA_QUEUE_FILE`, default `<tmp>/mega_queue.json`), and calls `_ensure_worker()`.
+2. **`_ensure_worker`** checks the recorded `worker_pid` for liveness (`_pid_alive`, `OpenProcess`+`STILL_ACTIVE` on Windows / `os.kill(pid,0)` on POSIX) under a flock; if none is running it **spawns a detached worker** — `subprocess.Popen([python, mega_import.py])` fed `{"action":"__worker"}` on stdin, with `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` (Windows) or `start_new_session=True` (POSIX). Being detached, it is **not** a child of the request subprocess, so Stash can't kill it.
+3. **The worker loop** claims the next `pending` item under the flock, marks it `downloading`, runs it through the same `_download_one()` (staging, resume, retry, MAC-rescue), records the result, and repeats until the queue drains. Queue writes are atomic (`.tmp` → `os.replace`).
+4. **On drain** the worker calls `_post_import()` — it reads the current library paths, adds any missing destinations, and triggers `metadataScan`, all via Stash's GraphQL using the `server_connection` (scheme/port/session cookie) captured in `main()`. So imports land in the library with no UI open.
+
+The UI (`downloadFiles`) just `enqueue`s, then polls `queue_status` to drive the progress bar; it filters by the returned `ids` so it only tracks its own batch. Metadata enrichment (auto-tag / identify / generate) still runs browser-side when open. Worker concurrency is sequential (NFS-safe). The detached-worker primitives (`DETACHED_PROCESS`, `start_new_session`, `/proc`-free liveness) are all guarded so the module imports on any platform.
+
 ## Anti-NFS-saturation (local staging + serialized publish)
 
 A full import once froze the whole host. Root cause: mega.py downloads to a local `/tmp` temp, then `shutil.move`s to the dest. When the dest is on **NFS** (a *different* filesystem) that move becomes a full copy to NFS, and several concurrent downloads stack multi-GB writes onto a `hard,timeo=600` mount → unbounded kernel dirty pages → writeback burst → **iowait storm** → the VM hangs (recoverable only by power-cycle). The post-import scan was *not* the culprit (no generate flags). See `mega-import-batch-redesign.md` for the full incident write-up.
@@ -132,6 +149,7 @@ Result on a 724k-node / 12 TB account: per-click navigation **6.7 s → ~85 ms (
 | `MEGA_SESSION_FILE` | `<tmp>/.mega_session.json` | Override session-cache path |
 | `MEGA_TREE_DB` | `<tmp>/.mega_tree.sqlite` | Override tree-index DB path |
 | `MEGA_TREE_TTL` | `86400` (24 h) | Tree-index freshness before re-fetch |
+| `MEGA_QUEUE_FILE` | `<tmp>/mega_queue.json` | Background download-queue file path |
 | `MEGA_HASHCASH_THREADS` | all logical CPUs | PoW solver thread count |
 | `MEGA_DOWNLOAD_RETRIES` | `3` | Per-file download attempts before giving up |
 | `MEGA_STAGING` | auto (NFS→on) | `force`/`off` to override staging decision |
