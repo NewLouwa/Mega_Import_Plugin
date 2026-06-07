@@ -311,9 +311,23 @@ class ActionLogoutTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class ActionFindTests(unittest.TestCase):
+    def setUp(self):
+        import os
+        fd, self._dbpath = tempfile.mkstemp(suffix=".sqlite")
+        os.close(fd); os.unlink(self._dbpath)  # _get_tree ingests on first use
+        os.environ["MEGA_TREE_DB"] = self._dbpath
+
+    def tearDown(self):
+        import os
+        os.environ.pop("MEGA_TREE_DB", None)
+        for suffix in ("", ".building"):
+            try: os.unlink(self._dbpath + suffix)
+            except OSError: pass
+
     def _patched_mega(self):
         import mega_import
         mock_mega = MagicMock()
+        mock_mega.sid = "testsid"
         mock_mega.get_files.return_value = _fake_files()
         token = mega_import._session_to_token("s", bytes(16))
         return mock_mega, token
@@ -533,7 +547,11 @@ class MainDispatchTests(unittest.TestCase):
         self.assertIn("mega.py", out["output"]["version"])
 
     def test_not_logged_in_returns_error(self):
-        out = _run_main({"action": "list", "path": "/"})
+        import mega_import
+        # Hermetic: ignore any real on-disk session so we exercise the
+        # logged-out path regardless of the dev's environment.
+        with patch.object(mega_import, "_load_saved_token", return_value=None):
+            out = _run_main({"action": "list", "path": "/"})
         self.assertIsNone(out["output"])
         self.assertIn("log in", out["error"].lower())
 
@@ -635,6 +653,61 @@ class PublishTests(unittest.TestCase):
                 self.mod._publish(src, dest / name, stage)
             self.assertEqual((dest / "a.bin").read_bytes(), b"data-a.bin")
             self.assertEqual((dest / "b.bin").read_bytes(), b"data-b.bin")
+
+
+# ---------------------------------------------------------------------------
+# SQLite tree index (ingest + indexed queries)
+# ---------------------------------------------------------------------------
+
+class TreeIndexTests(unittest.TestCase):
+    def setUp(self):
+        import os, mega_import
+        self.mod = mega_import
+        fd, self._dbpath = tempfile.mkstemp(suffix=".sqlite")
+        os.close(fd); os.unlink(self._dbpath)
+        os.environ["MEGA_TREE_DB"] = self._dbpath
+        self.mod._tree_ingest(_fake_files(), "sid1")
+        self.conn = self.mod._tree_conn()
+
+    def tearDown(self):
+        import os
+        try: self.conn.close()
+        except Exception: pass
+        os.environ.pop("MEGA_TREE_DB", None)
+        for suffix in ("", ".building"):
+            try: os.unlink(self._dbpath + suffix)
+            except OSError: pass
+
+    def test_fresh_after_ingest(self):
+        self.assertTrue(self.mod._tree_fresh("sid1"))
+        self.assertFalse(self.mod._tree_fresh("other-sid"))
+
+    def test_resolve_root_and_path(self):
+        h, p = self.mod._db_resolve(self.conn, "/")
+        self.assertEqual(p, "/")
+        h2, _ = self.mod._db_resolve(self.conn, "/Movies")
+        self.assertEqual(h2, "fold1")
+
+    def test_resolve_missing_raises(self):
+        from mega_import import MegaError
+        with self.assertRaises(MegaError) as cm:
+            self.mod._db_resolve(self.conn, "/nope")
+        self.assertEqual("not_found", cm.exception.code)
+
+    def test_children_folders_first_with_aggregates(self):
+        root, _ = self.mod._db_resolve(self.conn, "/")
+        items = self.mod._db_children(self.conn, root)
+        self.assertEqual(items[0]["type"], "folder")
+        self.assertEqual(items[0]["name"], "Movies")
+        self.assertEqual(items[0]["child_count"], 1)        # video.mp4
+        self.assertEqual(items[0]["total_size"], 1048576)
+        self.assertEqual(items[1]["type"], "file")
+
+    def test_collect_files_recursive(self):
+        fold, _ = self.mod._db_resolve(self.conn, "/Movies")
+        rows = self.mod._db_collect_files(self.conn, fold)
+        self.assertEqual([r["path"] for r in rows], ["/Movies/video.mp4"])
+        self.assertEqual(rows[0]["size"], 1048576)
 
 
 if __name__ == "__main__":

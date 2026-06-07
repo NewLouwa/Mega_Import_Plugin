@@ -119,7 +119,7 @@ Toggle any off if you don't want it. Configure stashbox API keys under **Stash �
 
 | Cache | Where | TTL | Why |
 |---|---|---|---|
-| Full MEGA tree | `/tmp/.mega_files_cache.json` (server) | 1 h | `mega.py.get_files()` fetches the entire account tree (slow on multi-TB accounts); we re-use it across plugin invocations |
+| Full MEGA tree | `<tmp>/.mega_tree.sqlite` (server, SQLite index) | 24 h | `mega.py.get_files()` fetches the entire account tree (slow on multi-TB accounts); indexed once so each list/find/download is an indexed query, not a full re-parse |
 | Per-folder listing | `localStorage` `mega-import:path-cache` (browser) | 1 h since last use | Stale-while-revalidate so navigation feels instant |
 | Session token | `/tmp/.mega_session.json` (server) | until logout | Skips the 3-min Hashcash PoW |
 
@@ -217,7 +217,7 @@ Stash → spawns Python subprocess → mega_import.py
 
 State files (all in `/tmp` on the Stash host):
 - `.mega_session.json` — `{sid, master_key}` (uint32 list or raw bytes)
-- `.mega_files_cache.json` — full file tree (auto-expires after 1 h)
+- `.mega_tree.sqlite` — full file tree, indexed (auto-expires after 24 h)
 - `megapy_*` — in-flight or orphaned downloads
 
 Browser localStorage:

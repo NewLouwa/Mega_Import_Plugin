@@ -13,7 +13,7 @@ This file is internal architecture detail for contributors.
 | **Frontend** | Vanilla `React.createElement` (no JSX, no build step) — Stash plugins ship a single JS file loaded as-is. Bootstrap + FontAwesome via Stash's `PluginApi.libraries`. Apollo client for GraphQL via `useApolloClient` |
 | **Bridge** | GraphQL `runPluginOperation(plugin_id, args)` — synchronous, returns the Python script's stdout JSON `output` field directly |
 | **Backend** | Python 3.8+ stdlib + `mega.py` + `tenacity` + `pycryptodome`. One subprocess per plugin invocation. Stateless across calls except for `/tmp/.mega_*.json` persistence files |
-| **Storage** | `localStorage` in browser (session, settings, history, path cache); `/tmp/*.json` on Stash host (session, file tree cache) |
+| **Storage** | `localStorage` in browser (session, settings, history, path cache); on the Stash host: session JSON + a SQLite tree index in the temp dir |
 
 ## Why no build step
 
@@ -110,12 +110,28 @@ Fix, in `_download_one()` / `_publish()`:
 
 Portability: `fcntl`, `os.fdatasync`, and `/proc/mounts` are POSIX/Linux-only and are all guarded, so the module imports and runs on Windows/macOS (where it always takes the local fast path).
 
+## Tree index (SQLite)
+
+`get_files()` returns the **entire** account node tree in one request — the MEGA API can't list a single folder server-side. On a large account that's hundreds of thousands of nodes. The old flat-JSON cache re-parsed that whole blob (hundreds of MB) on *every* navigation, because each plugin call is a fresh subprocess — measured ~6.7 s per folder click on a 724k-node account.
+
+Instead the tree is ingested **once** into a local SQLite file (`_tree_ingest`), and every list/find/download answers from indexed queries (`_db_resolve` / `_db_children` / `_db_collect_files`):
+
+- `nodes(handle PK, parent, type, name, name_lower, size, path, rcount, rsize, node_json)` with indexes on `parent`, `name_lower`, `path`.
+- Plaintext fields (structure, sizes) come straight from the API; **names are decrypted once at ingest** and stored, so search is an indexed `LIKE` and recursive folder size/count (`rcount`/`rsize`) are precomputed in one pass.
+- `node_json` (the decrypted key/iv/meta_mac) is stored per **file** so downloads need no re-fetch.
+- Ingest is **serialized across processes** (the same flock used by publish) and published atomically (`<db>.building` → `os.replace`), so concurrent download tasks never double-fetch or read a half-built index.
+- Keyed by `sid` with a long TTL (`MEGA_TREE_TTL`, default 24 h) since re-fetching is expensive.
+
+Result on a 724k-node / 12 TB account: per-click navigation **6.7 s → ~85 ms (root) / ~15 ms (subfolders)**. The one-time fetch+ingest (~220 s) is unchanged in nature (MEGA sends the whole tree) but paid far less often.
+
 ## Environment variables
 
 | Var | Default | Effect |
 | --- | --- | --- |
 | `MEGA_IMPORT_DEST` | `<stash-config>/mega_imports` | Override download destination |
-| `MEGA_SESSION_FILE` | `/tmp/.mega_session.json` | Override session-cache path |
+| `MEGA_SESSION_FILE` | `<tmp>/.mega_session.json` | Override session-cache path |
+| `MEGA_TREE_DB` | `<tmp>/.mega_tree.sqlite` | Override tree-index DB path |
+| `MEGA_TREE_TTL` | `86400` (24 h) | Tree-index freshness before re-fetch |
 | `MEGA_HASHCASH_THREADS` | all logical CPUs | PoW solver thread count |
 | `MEGA_DOWNLOAD_RETRIES` | `3` | Per-file download attempts before giving up |
 | `MEGA_STAGING` | auto (NFS→on) | `force`/`off` to override staging decision |
@@ -142,7 +158,7 @@ Tested with: emoji-only filenames, mixed RTL+LTR, unbroken 300-char names, `..` 
 | Cache | TTL | Why this number |
 | --- | --- | --- |
 | Browser path cache | 1 h since last use | Long enough to survive a full browsing session; short enough that returning the next day re-fetches |
-| Server file tree | 1 h | `mega.py.get_files()` walks the entire account; on a 13 TB account that's 30s-3min — too slow to do on every list |
+| Server tree index (SQLite) | 24 h (`MEGA_TREE_TTL`) | `mega.py.get_files()` walks the entire account; on a 12 TB / 724k-node account the fetch is ~3 min — too slow to repeat often, so the index lives a full day |
 | Server session | until explicit logout | Hashcash PoW takes 3-5 min; never expire automatically |
 
 Both browser + server caches are scoped by user (the server cache key includes the MEGA `sid`).

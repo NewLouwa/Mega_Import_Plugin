@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.2.0 — Unreleased
+
+Local SQLite tree index — large-account browsing goes from seconds-per-click to milliseconds.
+
+### Added
+- **SQLite tree index.** The full account tree is ingested **once** into a local SQLite file (keyed by `sid`, 24 h TTL) instead of a flat-JSON blob re-parsed on every call. Each list/find/download now answers from indexed queries that touch only the needed rows. Measured on a **724k-node / 12 TB** account: per-folder navigation **6.7 s → ~85 ms (root) / ~15 ms (subfolders)**, ~80×. Recursive folder sizes/counts are precomputed at ingest; search is an indexed `LIKE`; ingest is serialized across processes (flock) and published atomically (`.building` → `os.replace`). The MEGA API can't list a folder server-side (it sends the whole tree at once), so the one-time fetch is unchanged — but it's now paid far less often (`MEGA_TREE_TTL`, `MEGA_TREE_DB`).
+- 5 new backend unit tests for the index (ingest, resolve, children+aggregates, recursive collect, freshness) — 66 total.
+
+### Changed
+- Tree caching moved from the flat-JSON `/tmp/.mega_files_cache.json` to `tempfile.gettempdir()/.mega_tree.sqlite`. `cleanup_temp` / re-login behaviour unchanged.
+- Session/tree files now use `tempfile.gettempdir()` instead of a hardcoded `/tmp` (works on Windows/macOS; still `/tmp` on Linux).
+
 ## v1.1.0 — Unreleased
 
 Batch-import hardening: a large import can no longer freeze an NFS-backed host.

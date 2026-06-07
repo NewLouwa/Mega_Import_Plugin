@@ -53,7 +53,6 @@ Actions
 """
 
 import base64
-import fnmatch
 import json
 import os
 import random
@@ -461,50 +460,196 @@ def _get_mega():
     return _make_mega(sid, master_key)
 
 
-# Cache the full MEGA file tree across action invocations.
-# mega.py.get_files() pulls the entire account metadata in one request; for
-# multi-TB accounts that's 30s-3min.  Each Stash plugin call spawns a fresh
-# subprocess, so we persist the cache to /tmp keyed by sid to amortize.
-_FILES_CACHE = {"sid": None, "files": None, "ts": 0.0}
-_FILES_CACHE_TTL = 3600  # 1 hour
-_FILES_CACHE_FILE = Path(_tempfile.gettempdir()) / ".mega_files_cache.json"
+# ---------------------------------------------------------------------------
+# Local SQLite tree index.
+#
+# mega.py.get_files() pulls the ENTIRE account node tree in one request (the
+# MEGA API cannot list a single folder server-side), and on a large account
+# that's hundreds of thousands of nodes — slow to fetch (minutes) AND, with the
+# old flat-JSON cache, slow on *every* navigation: each plugin subprocess
+# re-parsed the whole multi-hundred-MB blob and re-walked all nodes just to
+# show one folder (measured ~6.7s per click on a 724k-node account).
+#
+# Instead we ingest the tree ONCE into a local SQLite file (keyed by sid, long
+# TTL) and answer each list/find/download from indexed queries that touch only
+# the rows they need — turning multi-second navigations into milliseconds.
+# Structure and sizes are plaintext in the API response; names are decrypted
+# once at ingest and stored, so search is a simple indexed LIKE.
+# ---------------------------------------------------------------------------
+_TREE_SCHEMA = """
+CREATE TABLE meta (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE nodes (
+    handle     TEXT PRIMARY KEY,
+    parent     TEXT,
+    type       INTEGER,
+    name       TEXT,
+    name_lower TEXT,
+    size       INTEGER,
+    path       TEXT,
+    rcount     INTEGER,
+    rsize      INTEGER,
+    node_json  TEXT
+);
+CREATE INDEX idx_parent ON nodes(parent);
+CREATE INDEX idx_name_lower ON nodes(name_lower);
+CREATE INDEX idx_path ON nodes(path);
+"""
 
 
-def _cached_get_files(m):
+def _tree_db_path():
+    return Path(os.environ.get("MEGA_TREE_DB") or (Path(_tempfile.gettempdir()) / ".mega_tree.sqlite"))
+
+
+def _tree_fresh(sid):
+    db = _tree_db_path()
+    if not db.exists():
+        return False
+    try:
+        import sqlite3, time as _time
+        conn = sqlite3.connect(str(db))
+        try:
+            meta = {k: v for k, v in conn.execute("SELECT k, v FROM meta").fetchall()}
+        finally:
+            conn.close()
+        if meta.get("sid") != (sid or ""):
+            return False
+        ttl = _int_env("MEGA_TREE_TTL", 86400)  # 24h — refetch is expensive
+        return (_time.time() - float(meta.get("ts", "0"))) < ttl
+    except Exception:
+        return False
+
+
+def _tree_conn():
+    import sqlite3
+    conn = sqlite3.connect(str(_tree_db_path()))
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _tree_ingest(files, sid):
+    """Build the SQLite index from a mega.py files dict (one-time per refresh).
+
+    Reuses the in-memory helpers (_node_path, _folder_aggregates) to compute
+    each node's full path and recursive folder size/count, then bulk-inserts.
+    Writes to a .building sidecar and atomically renames so concurrent readers
+    always see a complete index.
+    """
+    import sqlite3, time as _time
+    cache = {}
+    children_idx = _build_children_index(files)
+    agg_memo = {}
+    try:
+        root_id = _get_root_id(files)
+    except MegaError:
+        root_id = ""
+
+    rows = []
+    for h, n in files.items():
+        t = n.get("t")
+        if t == 2:  # cloud-drive root
+            rows.append((h, None, 2, "", "", None, "/", None, None, None))
+            continue
+        if t not in (0, 1):  # skip inbox/trash/unknown for browsing
+            continue
+        a = n.get("a") or {}
+        name = a.get("n") if isinstance(a, dict) else None
+        if not name:  # undecryptable / malformed → can't display or path it
+            continue
+        path = _node_path(h, files, cache)
+        parent = n.get("p")
+        if t == 0:
+            rows.append((h, parent, 0, name, name.lower(), n.get("s"), path,
+                         None, None, json.dumps(n)))
+        else:
+            cc, ts = _folder_aggregates(h, files, children_idx, agg_memo)
+            rows.append((h, parent, 1, name, name.lower(), ts, path, cc, ts, None))
+
+    db = _tree_db_path()
+    tmp = str(db) + ".building"
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    conn = sqlite3.connect(tmp)
+    try:
+        conn.executescript(_TREE_SCHEMA)
+        conn.executemany("INSERT OR REPLACE INTO nodes VALUES (?,?,?,?,?,?,?,?,?,?)", rows)
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('sid', ?)", (sid or "",))
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('ts', ?)", (str(_time.time()),))
+        conn.execute("INSERT OR REPLACE INTO meta VALUES ('root', ?)", (root_id or "",))
+        conn.commit()
+    finally:
+        conn.close()
+    os.replace(tmp, db)  # atomic swap — readers see old or new, never partial
+    print(f"[mega-import] tree indexed: {len(rows)} nodes -> {db}", file=sys.stderr)
+
+
+def _get_tree(m):
+    """Connection to a fresh SQLite tree index, ingesting if stale.
+
+    Ingest is serialized across processes (flock) so concurrent download tasks
+    don't each re-fetch the expensive full tree."""
     import time as _time
     sid = getattr(m, "sid", None)
-    now = _time.time()
+    if _tree_fresh(sid):
+        return _tree_conn()
+    lock_dir = Path(_tempfile.gettempdir()) / "mega_tree_lock"
+    with _publish_lock(lock_dir):
+        if _tree_fresh(sid):  # another process ingested while we waited
+            return _tree_conn()
+        print("[mega-import] fetching full MEGA tree (index miss)...", file=sys.stderr)
+        t0 = _time.time()
+        files = m.get_files()
+        print(f"[mega-import] tree fetched: {len(files)} nodes in {_time.time()-t0:.1f}s", file=sys.stderr)
+        _tree_ingest(files, sid)
+    return _tree_conn()
 
-    # In-memory hit (same process)
-    if (
-        _FILES_CACHE["sid"] == sid
-        and _FILES_CACHE["files"] is not None
-        and (now - _FILES_CACHE["ts"]) < _FILES_CACHE_TTL
-    ):
-        return _FILES_CACHE["files"]
 
-    # On-disk hit (across subprocesses)
-    if _FILES_CACHE_FILE.exists():
-        try:
-            blob = json.loads(_FILES_CACHE_FILE.read_text())
-            if blob.get("sid") == sid and (now - blob.get("ts", 0)) < _FILES_CACHE_TTL:
-                files = blob["files"]
-                _FILES_CACHE.update(sid=sid, files=files, ts=blob["ts"])
-                print(f"[mega-import] tree cache hit ({len(files)} nodes)", file=sys.stderr)
-                return files
-        except Exception as e:
-            print(f"[mega-import] cache read failed: {e}", file=sys.stderr)
+# --- indexed query helpers -------------------------------------------------
 
-    print("[mega-import] fetching full MEGA tree (cache miss)...", file=sys.stderr)
-    t0 = _time.time()
-    files = m.get_files()
-    print(f"[mega-import] tree fetched: {len(files)} nodes in {_time.time()-t0:.1f}s", file=sys.stderr)
-    _FILES_CACHE.update(sid=sid, files=files, ts=now)
-    try:
-        _FILES_CACHE_FILE.write_text(json.dumps({"sid": sid, "files": files, "ts": now}))
-    except Exception as e:
-        print(f"[mega-import] cache write failed: {e}", file=sys.stderr)
-    return files
+def _db_resolve(conn, path):
+    """(handle, normalized_path) for a path, or raise MegaError.  Prefers a
+    folder when a file and folder collide on the same path (duplicate names)."""
+    path = path.rstrip("/") or "/"
+    if path == "/":
+        row = conn.execute("SELECT v FROM meta WHERE k='root'").fetchone()
+        return (row[0] if row else ""), "/"
+    row = conn.execute(
+        "SELECT handle FROM nodes WHERE path=? ORDER BY type DESC LIMIT 1", (path,)
+    ).fetchone()
+    if not row:
+        raise MegaError(f"Path not found: {path!r}", code="not_found")
+    return row[0], path
+
+
+def _db_children(conn, parent_handle):
+    """Sorted child items (folders first, then alphabetical) for a folder."""
+    out = []
+    cur = conn.execute(
+        "SELECT type, name, size, path, rcount, rsize FROM nodes WHERE parent=? "
+        "ORDER BY type DESC, name COLLATE NOCASE", (parent_handle,))
+    for r in cur:
+        if r["type"] == 1:
+            out.append({"type": "folder", "name": r["name"], "size": r["rsize"] or 0,
+                        "child_count": r["rcount"] or 0, "total_size": r["rsize"] or 0,
+                        "path": r["path"]})
+        else:
+            out.append({"type": "file", "name": r["name"], "size": r["size"], "path": r["path"]})
+    return out
+
+
+def _db_collect_files(conn, folder_handle):
+    """All file rows (handle, path, size, node_json) recursively under a folder."""
+    return conn.execute(
+        """
+        WITH RECURSIVE sub(h) AS (
+            SELECT handle FROM nodes WHERE parent = ?
+            UNION ALL
+            SELECT n.handle FROM nodes n JOIN sub ON n.parent = sub.h
+        )
+        SELECT handle, path, size, node_json FROM nodes
+        WHERE handle IN (SELECT h FROM sub) AND type = 0
+        """, (folder_handle,)).fetchall()
 
 
 # ---------------------------------------------------------------------------
@@ -730,11 +875,12 @@ def action_logout(_args):
 def action_list(args):
     path = (args.get("path") or "/").rstrip("/") or "/"
     m = _get_mega()
-    files = _cached_get_files(m)
-    cache = {}
-    node_id, _node = _find_by_path(files, path)
-    cache[node_id] = path
-    return _list_children(files, node_id, path)
+    conn = _get_tree(m)
+    try:
+        handle, _ = _db_resolve(conn, path)
+        return _db_children(conn, handle)
+    finally:
+        conn.close()
 
 
 def action_find(args):
@@ -742,23 +888,31 @@ def action_find(args):
     if not query:
         raise MegaError("find requires 'query'", code="bad_args")
     search_path = (args.get("path") or "/").rstrip("/") or "/"
-    pattern = query if ("*" in query or "?" in query) else f"*{query}*"
+
+    # Translate the query to a SQL LIKE pattern: escape LIKE specials in the
+    # literal text, then map glob wildcards (* ?) → (% _).  No wildcard ⇒
+    # substring match (the old fnmatch *query* behaviour).
+    esc = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    if "*" in query or "?" in query:
+        like = esc.replace("*", "%").replace("?", "_")
+    else:
+        like = f"%{esc}%"
 
     m = _get_mega()
-    files = _cached_get_files(m)
-    cache = {}
+    conn = _get_tree(m)
+    try:
+        rows = conn.execute(
+            "SELECT type, name, path FROM nodes WHERE type IN (0, 1) "
+            "AND name_lower LIKE ? ESCAPE '\\'", (like.lower(),)).fetchall()
+    finally:
+        conn.close()
+
     items = []
-    for nid, n in files.items():
-        t = n.get("t", 0)
-        if t not in (0, 1):
+    for r in rows:
+        p = r["path"]
+        if search_path != "/" and not p.startswith(search_path + "/"):
             continue
-        name = (n.get("a") or {}).get("n", "")
-        if not fnmatch.fnmatch(name.lower(), pattern.lower()):
-            continue
-        full_path = _node_path(nid, files, cache)
-        if search_path != "/" and not full_path.startswith(search_path + "/"):
-            continue
-        items.append({"type": "folder" if t == 1 else "file", "name": name, "path": full_path})
+        items.append({"type": "folder" if r["type"] == 1 else "file", "name": r["name"], "path": p})
     items.sort(key=lambda i: i["path"].lower())
     return items
 
@@ -1200,48 +1354,49 @@ def action_download(args):
         print(f"[mega-import] NFS-safe mode: staging in {staging_dir} → serialized publish to {dest_path}", file=sys.stderr)
 
     m = _get_mega()
-    files = _cached_get_files(m)
-    cache = {}
-
-    # Build path → (nid, node) map once.
-    path_to_node = {}
-    for nid, n in files.items():
-        if n.get("t") in (0, 1):
-            p = _node_path(nid, files, cache)
-            path_to_node[p] = (nid, n)
-
+    conn = _get_tree(m)
     items = []
-    for remote in paths:
-        if not remote.startswith("/"):
-            remote = "/" + remote
-        entry = path_to_node.get(remote)
-        if entry is None:
-            items.append({"path": remote, "status": "error", "error": "Path not found in MEGA"})
-            continue
-        nid, node = entry
-        to_download = (
-            _collect_files_under(files, nid, cache)
-            if node.get("t") == 1
-            else [(remote, nid, node)]
-        )
-        for file_path, file_nid, file_node in to_download:
-            raw_fname = (file_node.get("a") or {}).get("n", "download")
-            # Caller-supplied name wins (used by the "rename from folder" toggle
-            # in the preview modal). Single-file calls only — for recursive
-            # folder downloads the override doesn't make sense.
-            if forced_name and len(paths) == 1 and node.get("t") == 0:
-                fname = _slugify_filename(forced_name)
+    try:
+        for remote in paths:
+            if not remote.startswith("/"):
+                remote = "/" + remote
+            try:
+                handle, _ = _db_resolve(conn, remote)
+            except MegaError:
+                items.append({"path": remote, "status": "error", "error": "Path not found in MEGA"})
+                continue
+            trow = conn.execute("SELECT type FROM nodes WHERE handle=?", (handle,)).fetchone()
+            is_folder = trow is not None and trow["type"] == 1
+            if is_folder:
+                file_rows = _db_collect_files(conn, handle)
             else:
-                fname = _slugify_filename(raw_fname)
-            expected_size = file_node.get("s")
-            target_file = dest_path / fname
-            # Backpressure: don't let parallel downloads outrun the publisher.
-            if staging_dir is not None:
-                _await_staging_capacity(staging_dir)
-            print(f"[mega-import] downloading {file_path!r} → {target_file} (raw={raw_fname!r}, size={expected_size})", file=sys.stderr)
-            items.append(_download_one(
-                m, file_nid, file_node, dest_path, fname, target_file, expected_size, file_path, staging_dir
-            ))
+                fr = conn.execute(
+                    "SELECT handle, path, size, node_json FROM nodes WHERE handle=?", (handle,)
+                ).fetchone()
+                file_rows = [fr] if fr else []
+            for fr in file_rows:
+                file_path = fr["path"]
+                file_nid = fr["handle"]
+                file_node = json.loads(fr["node_json"]) if fr["node_json"] else {}
+                raw_fname = (file_node.get("a") or {}).get("n", "download")
+                # Caller-supplied name wins (the "rename from folder" toggle in
+                # the preview modal). Single-file calls only — for recursive
+                # folder downloads the override doesn't make sense.
+                if forced_name and len(paths) == 1 and not is_folder:
+                    fname = _slugify_filename(forced_name)
+                else:
+                    fname = _slugify_filename(raw_fname)
+                expected_size = fr["size"]
+                target_file = dest_path / fname
+                # Backpressure: don't let parallel downloads outrun the publisher.
+                if staging_dir is not None:
+                    _await_staging_capacity(staging_dir)
+                print(f"[mega-import] downloading {file_path!r} → {target_file} (raw={raw_fname!r}, size={expected_size})", file=sys.stderr)
+                items.append(_download_one(
+                    m, file_nid, file_node, dest_path, fname, target_file, expected_size, file_path, staging_dir
+                ))
+    finally:
+        conn.close()
 
     return {"dest": str(dest_path), "items": items}
 
@@ -1319,28 +1474,30 @@ def action_preview(args):
     """
     paths = args.get("paths") or []
     m = _get_mega()
-    files = _cached_get_files(m)
-    cache = {}
-
-    path_to_node = {}
-    for nid, n in files.items():
-        if n.get("t") in (0, 1):
-            p = _node_path(nid, files, cache)
-            path_to_node[p] = (nid, n)
+    conn = _get_tree(m)
 
     out_files = []
-    for remote in paths:
-        if not remote.startswith("/"):
-            remote = "/" + remote
-        entry = path_to_node.get(remote)
-        if entry is None:
-            continue
-        nid, node = entry
-        leafs = _collect_files_under(files, nid, cache) if node.get("t") == 1 else [(remote, nid, node)]
-        for fp, _fnid, fnode in leafs:
-            sz = fnode.get("s") or 0
-            ext = fp.rsplit(".", 1)[-1].lower() if "." in fp else ""
-            out_files.append({"path": fp, "size": sz, "ext": ext})
+    try:
+        for remote in paths:
+            if not remote.startswith("/"):
+                remote = "/" + remote
+            try:
+                handle, _ = _db_resolve(conn, remote)
+            except MegaError:
+                continue
+            trow = conn.execute("SELECT type, path, size FROM nodes WHERE handle=?", (handle,)).fetchone()
+            if trow is None:
+                continue
+            if trow["type"] == 1:
+                leafs = [(r["path"], r["size"]) for r in _db_collect_files(conn, handle)]
+            else:
+                leafs = [(trow["path"], trow["size"])]
+            for fp, sz in leafs:
+                sz = sz or 0
+                ext = fp.rsplit(".", 1)[-1].lower() if "." in fp else ""
+                out_files.append({"path": fp, "size": sz, "ext": ext})
+    finally:
+        conn.close()
 
     by_ext = {}
     for f in out_files:

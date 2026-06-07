@@ -61,7 +61,7 @@ All MEGA traffic is **server-side** — the browser only ever talks to Stash. Fi
 | [test_mega_import.py](test_mega_import.py) | 54 backend tests, no Stash or MEGA needed |
 | [install.sh](install.sh) / [install.ps1](install.ps1) | Local + remote installers (rsync/scp fallback over SSH) |
 
-The JS bridge uses **`runPluginOperation`** (synchronous Stash GraphQL mutation) to talk to the Python backend. Each call spawns a fresh Python subprocess. State is persisted via `/tmp/.mega_session.json` and `/tmp/.mega_files_cache.json` so successive calls reuse session + cached file tree.
+The JS bridge uses **`runPluginOperation`** (synchronous Stash GraphQL mutation) to talk to the Python backend. Each call spawns a fresh Python subprocess. State is persisted via a session JSON and a SQLite tree index in the host temp dir so successive calls reuse the session + an indexed file tree.
 
 For deeper architecture (state files, browser localStorage keys, action list), see the **Architecture quick-reference** section in [INSTALL.md](INSTALL.md).
 
