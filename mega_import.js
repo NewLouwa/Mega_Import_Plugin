@@ -395,18 +395,20 @@
       // Every subsequent navigation is an indexed query (~ms).
       if (action === "list" || action === "find" || action === "preview") return 15 * 60 * 1000;
       if (action === "download") {
-        // Pessimistic: assume 200 KB/s throughput. Add 60s overhead for
-        // hashcash retries / connection setup. Floor at 2 min, cap at 1 hour
-        // per single download call (folder downloads should be expanded
-        // client-side via preview before they hit this).
+        // Assume a throttled ~150 KB/s MEGA link (free accounts are slow) plus
+        // 60s setup overhead. Floor 2 min, cap 6 hours — a single multi-GB file
+        // on a slow link genuinely takes hours, and the old 1-hour cap timed
+        // the UI out ~right as a 2.7 GB file finished. The backend keeps running
+        // past a UI timeout anyway, and file-level resume means re-running skips
+        // already-complete files.
         const MIN_MS = 2 * 60 * 1000;
-        const MAX_MS = 60 * 60 * 1000;
+        const MAX_MS = 6 * 60 * 60 * 1000;
         if (typeof sizeBytes === "number" && sizeBytes > 0) {
-          const est = 60_000 + Math.ceil(sizeBytes / 200_000) * 1000;
+          const est = 60_000 + Math.ceil(sizeBytes / 150_000) * 1000;
           return Math.min(MAX_MS, Math.max(MIN_MS, est));
         }
-        // Unknown size (e.g. raw folder path): be generous — 30 min default.
-        return 30 * 60 * 1000;
+        // Unknown size (e.g. raw folder path): be generous — 1 hour default.
+        return 60 * 60 * 1000;
       }
       return 120_000;                                   // 2 min for everything else
     },
