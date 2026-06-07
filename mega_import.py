@@ -68,6 +68,14 @@ try:
 except Exception:
     pass
 
+# The args JSON arrives on stdin as UTF-8, but on Windows Python defaults stdin
+# to the locale codec (cp1252) for a pipe — which mangles non-ASCII names
+# (e.g. an emoji folder "🔞 …" → "Ã°ÂŸÂ”Âž …") so path lookups miss.  Force UTF-8.
+try:
+    sys.stdin.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 # ---------------------------------------------------------------------------
 # Compatibility: asyncio.coroutine was removed in Python 3.11.
 # tenacity ≤ 5.x (and some older mega.py deps) still use it at import time.
@@ -1541,7 +1549,12 @@ def _write(result, error):
 
 
 def main():
-    raw = sys.stdin.read()
+    # Read the args JSON as UTF-8 explicitly — reading via the text wrapper can
+    # use the platform codec (cp1252 on Windows) and corrupt non-ASCII paths.
+    try:
+        raw = sys.stdin.buffer.read().decode("utf-8")
+    except Exception:
+        raw = sys.stdin.read()
     if not raw.strip():
         _write(None, "empty stdin")
         return
