@@ -311,7 +311,14 @@ def _session_request_with_hashcash(self, method, url, **kwargs):
 if _requests is not None:
     _requests.Session.request = _session_request_with_hashcash
 
-SESSION_FILE = Path(os.environ.get("MEGA_SESSION_FILE", "/tmp/.mega_session.json"))
+# Use the platform temp dir (gettempdir() == /tmp on Linux, so media-vm is
+# unchanged; on Windows/macOS a hardcoded "/tmp" resolves to a non-existent
+# C:\tmp and the session/cache silently fail to persist).
+import tempfile as _tempfile
+SESSION_FILE = Path(
+    os.environ.get("MEGA_SESSION_FILE")
+    or (Path(_tempfile.gettempdir()) / ".mega_session.json")
+)
 
 # Default download location.  We want a path that:
 #   1. Always exists / is creatable on any Stash install (Linux/macOS/Windows)
@@ -451,7 +458,7 @@ def _get_mega():
 # subprocess, so we persist the cache to /tmp keyed by sid to amortize.
 _FILES_CACHE = {"sid": None, "files": None, "ts": 0.0}
 _FILES_CACHE_TTL = 3600  # 1 hour
-_FILES_CACHE_FILE = Path("/tmp/.mega_files_cache.json")
+_FILES_CACHE_FILE = Path(_tempfile.gettempdir()) / ".mega_files_cache.json"
 
 
 def _cached_get_files(m):
