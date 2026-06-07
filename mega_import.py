@@ -1329,9 +1329,20 @@ def _resumable_download(m, handle, node, out_dir, fname, expected_size):
     with open(partial, "r+b" if (offset > 0 and partial.exists()) else "wb") as fo:
         fo.seek(offset)
         fo.truncate(offset)
+        since = 0
         for chunk in resp.iter_content(chunk_size=1 << 20):
-            if chunk:
-                fo.write(aes.decrypt(chunk))
+            if not chunk:
+                continue
+            fo.write(aes.decrypt(chunk))
+            # Periodically flush to the OS so the on-disk partial tracks
+            # progress — if the process is hard-killed (power loss, SIGKILL),
+            # we keep (nearly) the latest bytes to resume from, not just what
+            # was in Python's buffer. Resume aligns down to a 16-byte block,
+            # so any torn tail is simply re-fetched.
+            since += len(chunk)
+            if since >= (16 << 20):
+                fo.flush()
+                since = 0
 
     got = partial.stat().st_size
     if size and got != size:
