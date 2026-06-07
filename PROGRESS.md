@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.1.0 — Unreleased
+
+Batch-import hardening: a large import can no longer freeze an NFS-backed host.
+
+### Added
+- **Anti-NFS-saturation batch import.** When the destination is a network filesystem, downloads now land in a **local staging dir** and are **published to the dest serialized + fsync-paced** (one cross-process writer via `fcntl.flock`, 16 MB chunks, `os.fdatasync` every 128 MB, atomic `.part` → `os.replace`). Bounds kernel dirty pages → no writeback burst → no iowait storm. Auto-detected from `/proc/mounts`; local-disk dests keep the original direct fast path. POSIX-only primitives are guarded so the module still runs on Windows/macOS. See [TECHNICAL.md](TECHNICAL.md) and `mega-import-batch-redesign.md`.
+- **Backpressure** so parallel downloads can't outrun the publisher and fill the local disk (`MEGA_MAX_STAGED_BYTES`, default 8 GB).
+- Download **file-level resume**: a complete file already at the destination (size matches) is skipped, so re-running an interrupted multi-file import is idempotent and cheap.
+- Download **retry with exponential backoff** for transient failures (`MEGA_DOWNLOAD_RETRIES`, default 3).
+- New env vars (see [TECHNICAL.md](TECHNICAL.md)): `MEGA_HASHCASH_THREADS`, `MEGA_DOWNLOAD_RETRIES`, `MEGA_STAGING`, `MEGA_STAGING_DIR`, `MEGA_MAX_STAGED_BYTES`, `MEGA_PUBLISH_CHUNK`, `MEGA_PUBLISH_FSYNC_EVERY`, `MEGA_PUBLISH_BWLIMIT`.
+- 7 new backend unit tests (staging decision, NFS detection, paced publish round-trip) — 61 total.
+
+### Changed
+- **Default download concurrency 3 → 1.** Safe out-of-the-box for NFS-backed dests; the backend serializes NFS writes regardless, so raising it again only affects download parallelism. `MAX_CONCURRENCY` stays 5.
+- Hashcash PoW solver now uses **all** logical CPUs instead of capping at 8 threads (override with `MEGA_HASHCASH_THREADS`); logs solve time + thread count to stderr. Cuts first-login wait on hosts with >8 cores.
+- `cleanup_temp` now also clears staged-but-unpublished orphans, not just `/tmp/megapy_*`.
+
 ## v1.0.0 — 2026-05-02
 
 First stable release. Fully reworked from the v0.x prototype line.

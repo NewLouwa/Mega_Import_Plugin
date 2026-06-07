@@ -1,6 +1,6 @@
 name: MEGA Import
 description: Browse a MEGA.nz account inside Stash, import files (with size-aware timeouts, per-folder cache, real-byte progress), auto-tag & identify on the way in.
-version: 1.0.0
+version: 1.1.0
 ui:
   javascript:
     - mega_import.js

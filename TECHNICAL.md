@@ -56,7 +56,7 @@ Stash returns `output` directly to the JS caller; `error` is converted to a Grap
 | `list` `{path}` | Returns sorted children of a folder, with `child_count` and `total_size` for sub-folders |
 | `find` `{query, path?}` | Glob-pattern recursive search across the whole tree |
 | `preview` `{paths}` | Recursively expand paths, return `{total_files, total_size, by_ext, files[]}` for the preview modal |
-| `download` `{paths, dest?}` | Download files (single or many), with MAC-rescue + slugified filenames |
+| `download` `{paths, dest?}` | Download files (single or many), with MAC-rescue, file-level resume, retry/backoff + slugified filenames |
 | `temp_progress` | Snapshot of `/tmp/megapy_*` files for real-byte progress UI |
 | `cleanup_temp` | Delete all `/tmp/megapy_*` (manual cleanup button) |
 
@@ -70,7 +70,7 @@ SHA-256([nonce_be] + [token_bytes × 262144])[0:4] ≤ threshold(easiness)
 
 `threshold(e) = (((e & 63) << 1) + 1) << ((e >> 6) * 7 + 3)`.
 
-Implemented in `_gencash()` using `threading` workers. `hashlib` releases the GIL during large `update()` calls, so threads run in genuine parallel — on a 4-core box first login takes 2-5 minutes. The session token cached in `/tmp/.mega_session.json` skips this on subsequent runs.
+Implemented in `_gencash()` using `threading` workers. `hashlib` releases the GIL during large `update()` calls, so threads run in genuine parallel. Each nonce attempt SHA-256-hashes the full ~12 MB buffer and a login challenge routinely needs tens-to-hundreds of thousands of attempts, so the only lever is core count — the solver uses **all** logical CPUs (override with `MEGA_HASHCASH_THREADS`). The nonce is at the *front* of the buffer, so SHA-256's Merkle–Damgård chaining forbids precomputing the constant tail: every attempt genuinely re-hashes all 12 MB, there is no algorithmic shortcut. It logs the solve time + thread count to stderr. The session token cached in `/tmp/.mega_session.json` makes this a one-time cost — `list`/`download`/`whoami` reuse the SID and never re-solve.
 
 ## MAC-mismatch workaround
 
@@ -89,6 +89,41 @@ The MAC algorithm is buggy for many files — see [odwyersoftware/mega.py#61](ht
 2. Lists `/tmp/megapy_*` and finds files with size matching the expected `node["s"]`
 3. `shutil.move`s the matching one to the final destination
 4. Marks the import row `✓ (mac-skipped)` in the UI
+
+## Download resilience
+
+`_download_one()` wraps each per-file transfer with:
+
+- **File-level resume** — if a complete copy (size == `node["s"]`) already sits at the destination, the transfer is skipped and the row is marked `skipped`. mega.py downloads to a `/tmp` temp file and only moves on success, so a file at the destination is genuinely complete, never partial. Re-running an interrupted multi-file import is therefore cheap and idempotent.
+- **Retry with backoff** — transient failures (network blips, mega.py request errors, publish errors) are retried up to `MEGA_DOWNLOAD_RETRIES` times (default 3) with exponential backoff (1s, 2s, 4s, … capped at 15s). The MAC-rescue path counts as success and short-circuits the retries.
+
+## Anti-NFS-saturation (local staging + serialized publish)
+
+A full import once froze the whole host. Root cause: mega.py downloads to a local `/tmp` temp, then `shutil.move`s to the dest. When the dest is on **NFS** (a *different* filesystem) that move becomes a full copy to NFS, and several concurrent downloads stack multi-GB writes onto a `hard,timeo=600` mount → unbounded kernel dirty pages → writeback burst → **iowait storm** → the VM hangs (recoverable only by power-cycle). The post-import scan was *not* the culprit (no generate flags). See `mega-import-batch-redesign.md` for the full incident write-up.
+
+Fix, in `_download_one()` / `_publish()`:
+
+1. **Local staging** — when the dest is a network filesystem, mega.py downloads into a local staging dir (`MEGA_STAGING_DIR`, default `<tmp>/mega_stage`) on the fast local disk. Parallel downloads never touch NFS.
+2. **Serialized + fsync-paced publish** — `_publish()` moves each staged file to the dest **one at a time across all concurrent download *processes*** (a `fcntl.flock` lockfile — each download is a separate `python mega_import.py` process, so the lock must be cross-process). It copies in 16 MB chunks and `os.fdatasync`s every 128 MB so dirty pages stay bounded, then `os.replace`s a `.part` sidecar → atomic publish (Stash never scans a half-written file). Optional MB/s cap via `MEGA_PUBLISH_BWLIMIT`.
+3. **Backpressure** — before each download, `_await_staging_capacity()` blocks while staged-but-unpublished bytes exceed `MEGA_MAX_STAGED_BYTES` (8 GB), so parallel downloads can't outrun the publisher and fill the local disk.
+4. **Auto-detect** — `_is_network_fs()` parses `/proc/mounts` (Linux only). On a **local-disk dest** (or any non-Linux host) staging is skipped entirely — download straight to dest, the original fast path, zero penalty. Force/disable with `MEGA_STAGING=force|off`.
+
+Portability: `fcntl`, `os.fdatasync`, and `/proc/mounts` are POSIX/Linux-only and are all guarded, so the module imports and runs on Windows/macOS (where it always takes the local fast path).
+
+## Environment variables
+
+| Var | Default | Effect |
+| --- | --- | --- |
+| `MEGA_IMPORT_DEST` | `<stash-config>/mega_imports` | Override download destination |
+| `MEGA_SESSION_FILE` | `/tmp/.mega_session.json` | Override session-cache path |
+| `MEGA_HASHCASH_THREADS` | all logical CPUs | PoW solver thread count |
+| `MEGA_DOWNLOAD_RETRIES` | `3` | Per-file download attempts before giving up |
+| `MEGA_STAGING` | auto (NFS→on) | `force`/`off` to override staging decision |
+| `MEGA_STAGING_DIR` | `<tmp>/mega_stage` | Local staging dir for the NFS-safe path |
+| `MEGA_MAX_STAGED_BYTES` | `8589934592` (8 GB) | Backpressure cap on staged-but-unpublished bytes |
+| `MEGA_PUBLISH_CHUNK` | `16777216` (16 MB) | Publish copy chunk size |
+| `MEGA_PUBLISH_FSYNC_EVERY` | `134217728` (128 MB) | fdatasync cadence during publish |
+| `MEGA_PUBLISH_BWLIMIT` | `0` (off) | Publish bandwidth cap, MB/s |
 
 ## Filename slugification
 

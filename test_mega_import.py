@@ -553,5 +553,89 @@ class MainDispatchTests(unittest.TestCase):
         self.assertIsNotNone(out["output"])
 
 
+# ---------------------------------------------------------------------------
+# Anti-NFS-saturation: staging decision + serialized paced publish
+# ---------------------------------------------------------------------------
+
+class StagingDecisionTests(unittest.TestCase):
+    def setUp(self):
+        import mega_import
+        self.mod = mega_import
+
+    def test_should_stage_env_off(self):
+        with patch.dict("os.environ", {"MEGA_STAGING": "off"}):
+            self.assertFalse(self.mod._should_stage(Path(tempfile.gettempdir())))
+
+    def test_should_stage_env_force(self):
+        with patch.dict("os.environ", {"MEGA_STAGING": "force"}):
+            self.assertTrue(self.mod._should_stage(Path(tempfile.gettempdir())))
+
+    def test_should_stage_auto_local_is_false(self):
+        # A local temp dir is never a network fs → no staging by default.
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+            os.environ.pop("MEGA_STAGING", None)
+            self.assertFalse(self.mod._should_stage(Path(tempfile.gettempdir())))
+
+    def test_is_network_fs_non_linux_false(self):
+        with patch.object(self.mod.sys, "platform", "win32"):
+            self.assertFalse(self.mod._is_network_fs("/anything"))
+
+    def test_is_network_fs_detects_nfs_from_mounts(self):
+        mounts = (
+            "proc /proc proc rw 0 0\n"
+            "/dev/sda1 / ext4 rw 0 0\n"
+            "172.16.10.10:/dl /mnt/dl nfs4 rw 0 0\n"
+        )
+        with (
+            patch.object(self.mod.sys, "platform", "linux"),
+            patch("builtins.open", return_value=io.StringIO(mounts)),
+            patch("os.path.realpath", side_effect=lambda p: p),
+        ):
+            self.assertTrue(self.mod._is_network_fs("/mnt/dl/adult-media"))
+            self.assertFalse(self.mod._is_network_fs("/home/user/x"))
+
+
+class PublishTests(unittest.TestCase):
+    def setUp(self):
+        import mega_import
+        self.mod = mega_import
+
+    def test_publish_copies_bytes_and_removes_source(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            stage = d / "stage"
+            stage.mkdir()
+            dest = d / "dest"
+            dest.mkdir()
+            src = stage / "video.mp4"
+            payload = b"x" * (40 * 1024 * 1024 + 1234)  # > one 16MB chunk
+            src.write_bytes(payload)
+            dst = dest / "video.mp4"
+
+            # Tiny fsync cadence to exercise the periodic-flush branch.
+            with patch.dict("os.environ", {"MEGA_PUBLISH_FSYNC_EVERY": str(1 << 20)}):
+                self.mod._publish(src, dst, stage)
+
+            self.assertTrue(dst.exists())
+            self.assertEqual(dst.read_bytes(), payload)
+            self.assertFalse(src.exists(), "source should be removed after publish")
+            self.assertFalse((Path(str(dst) + ".part")).exists(), "no .part leftover")
+
+    def test_publish_lock_is_reentrant_across_calls(self):
+        # Two sequential publishes through the same lock dir must both succeed
+        # (lock acquired and released cleanly each time).
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            stage = d / "stage"; stage.mkdir()
+            dest = d / "dest"; dest.mkdir()
+            for name in ("a.bin", "b.bin"):
+                src = stage / name
+                src.write_bytes(b"data-" + name.encode())
+                self.mod._publish(src, dest / name, stage)
+            self.assertEqual((dest / "a.bin").read_bytes(), b"data-a.bin")
+            self.assertEqual((dest / "b.bin").read_bytes(), b"data-b.bin")
+
+
 if __name__ == "__main__":
     unittest.main()

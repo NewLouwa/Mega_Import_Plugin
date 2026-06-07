@@ -183,7 +183,19 @@ def _gencash(token_b64: str, easiness: int) -> str:
     tail = bytes(token_area[64:])            # 12,582,852 bytes
 
     threshold = _hc_threshold(easiness)
-    num_workers = min(os.cpu_count() or 1, 8)
+    # PoW is the login bottleneck: every nonce attempt SHA-256-hashes the full
+    # ~12 MB buffer, and login challenges routinely need tens/hundreds of
+    # thousands of attempts.  hashlib releases the GIL for large updates, so
+    # threads scale ~linearly with cores — use ALL of them (was capped at 8,
+    # which throttled bigger hosts).  Override with MEGA_HASHCASH_THREADS.
+    try:
+        num_workers = int(os.environ.get("MEGA_HASHCASH_THREADS") or 0)
+    except ValueError:
+        num_workers = 0
+    if num_workers <= 0:
+        num_workers = os.cpu_count() or 4
+    import time as _hc_time
+    _hc_t0 = _hc_time.time()
     stop = threading.Event()
     result_holder: list = [None]
     lock = threading.Lock()
@@ -218,6 +230,11 @@ def _gencash(token_b64: str, easiness: int) -> str:
 
     if result_holder[0] is None:
         raise MegaError("Hashcash PoW: nonce space exhausted", code="hashcash_failed")
+    print(
+        f"[mega-import] Hashcash solved in {_hc_time.time() - _hc_t0:.1f}s "
+        f"using {num_workers} threads",
+        file=sys.stderr,
+    )
     return result_holder[0]
 
 
@@ -845,6 +862,308 @@ def _slugify_filename(name):
     return out
 
 
+def _rescue_mac_tempfile(target_file, expected_size):
+    """Rescue a download that failed mega.py's buggy MAC check.
+
+    mega.py raises ValueError('Mismatched mac') AFTER fully writing the
+    decrypted bytes to a /tmp/megapy_* temp file (it uses delete=False and
+    raises before shutil.move).  Move the matching temp file into place.
+    Returns True if a file of the expected size was rescued.
+    """
+    if expected_size is None:
+        return False
+    import tempfile, glob, shutil as _shutil
+    tmp_dir = tempfile.gettempdir()
+    candidates = [
+        Path(p) for p in glob.glob(str(Path(tmp_dir) / "megapy_*"))
+        if Path(p).is_file()
+    ]
+    # Most-recent first, take the first exact size match.
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    for cand in candidates:
+        try:
+            if cand.stat().st_size == expected_size:
+                _shutil.move(str(cand), str(target_file))
+                return True
+        except Exception:
+            continue
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Anti-NFS-saturation: local staging + serialized, paced publish.
+#
+# A full import once froze the whole host.  mega.py downloads each file to a
+# local /tmp temp, then shutil.move()s it to the dest.  When the dest is on NFS
+# (a *different* filesystem) that move becomes a full copy to NFS, and several
+# concurrent downloads stack multi-GB writes onto the mount → unbounded dirty
+# pages → writeback burst → iowait storm → the VM hangs (recoverable only by
+# power-cycle).  See mega-import-batch-redesign.md.
+#
+# Fix: when the dest is a network filesystem, download to a LOCAL staging dir
+# (parallel, never touches NFS) then PUBLISH each file to the dest one-at-a-time
+# across all concurrent plugin processes (cross-process lock), copying in chunks
+# with periodic fdatasync so dirty pages stay bounded.  On a local-disk dest the
+# staging is skipped entirely — no penalty, the current fast path is preserved.
+# ---------------------------------------------------------------------------
+import contextlib
+
+# POSIX-only primitives — guard so the module still imports on Windows/macOS.
+try:
+    import fcntl as _fcntl
+except ImportError:
+    _fcntl = None
+try:
+    import msvcrt as _msvcrt
+except ImportError:
+    _msvcrt = None
+
+# fdatasync flushes data without the metadata round-trip; Linux-only.
+_fdatasync = getattr(os, "fdatasync", os.fsync)
+
+_NETWORK_FSTYPES = {
+    "nfs", "nfs4", "cifs", "smbfs", "smb3", "fuse.nfs", "fuse.glusterfs", "ceph",
+}
+
+
+def _staging_dir():
+    import tempfile
+    return Path(os.environ.get("MEGA_STAGING_DIR") or (Path(tempfile.gettempdir()) / "mega_stage"))
+
+
+def _is_network_fs(path):
+    """True if `path` lives on a network filesystem (NFS/CIFS/…).
+
+    Linux-only via /proc/mounts; returns False everywhere else and on any
+    error, so non-Linux hosts always take the direct/local fast path.
+    """
+    if not sys.platform.startswith("linux"):
+        return False
+    try:
+        target = os.path.realpath(str(path))
+        best_mp, best_fstype = "", ""
+        with open("/proc/mounts", encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                mp, fstype = parts[1], parts[2]
+                if (target == mp or target.startswith(mp.rstrip("/") + "/")) and len(mp) >= len(best_mp):
+                    best_mp, best_fstype = mp, fstype
+        return best_fstype in _NETWORK_FSTYPES
+    except Exception:
+        return False
+
+
+def _should_stage(dest_path):
+    """Whether to use local staging + serialized publish for this dest.
+
+    MEGA_STAGING=1/on/force → always; =0/off → never; otherwise auto-detect
+    (stage only when the dest is a network filesystem).
+    """
+    flag = (os.environ.get("MEGA_STAGING") or "").strip().lower()
+    if flag in ("0", "off", "false", "no"):
+        return False
+    if flag in ("1", "on", "true", "yes", "force"):
+        return True
+    return _is_network_fs(dest_path)
+
+
+def _int_env(name, default):
+    try:
+        v = int(os.environ.get(name) or 0)
+        return v if v > 0 else default
+    except ValueError:
+        return default
+
+
+@contextlib.contextmanager
+def _publish_lock(lock_dir):
+    """Cross-process exclusive lock: only ONE file is written to the dest at a
+    time, no matter how many concurrent download processes run.
+
+    Each download is a separate `python mega_import.py` process, so an
+    in-process lock would not help — this uses fcntl.flock on POSIX, msvcrt on
+    Windows, and degrades to a best-effort no-op if neither is available.
+    """
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    fh = open(lock_dir / ".publish.lock", "a+")
+    try:
+        if _fcntl is not None:
+            _fcntl.flock(fh.fileno(), _fcntl.LOCK_EX)
+        elif _msvcrt is not None:
+            fh.seek(0)
+            _msvcrt.locking(fh.fileno(), _msvcrt.LK_LOCK, 1)
+        yield
+    finally:
+        try:
+            if _fcntl is not None:
+                _fcntl.flock(fh.fileno(), _fcntl.LOCK_UN)
+            elif _msvcrt is not None:
+                fh.seek(0)
+                _msvcrt.locking(fh.fileno(), _msvcrt.LK_UNLCK, 1)
+        except Exception:
+            pass
+        fh.close()
+
+
+def _publish(src, dst, lock_dir):
+    """Move staged file `src` → final `dst` without flooding the dest FS.
+
+    Serialized across processes (one writer), copied in chunks with periodic
+    fdatasync so kernel dirty pages stay bounded (no writeback burst → no
+    iowait storm), and published atomically via a `.part` sidecar + os.replace
+    so Stash never scans a half-written file.  Optional MB/s cap via
+    MEGA_PUBLISH_BWLIMIT.
+    """
+    import time as _time
+
+    chunk = _int_env("MEGA_PUBLISH_CHUNK", 16 << 20)              # 16 MB reads
+    fsync_every = _int_env("MEGA_PUBLISH_FSYNC_EVERY", 128 << 20)  # fdatasync cadence
+    try:
+        bwlimit = float(os.environ.get("MEGA_PUBLISH_BWLIMIT") or 0)  # MB/s, 0=off
+    except ValueError:
+        bwlimit = 0.0
+
+    src, dst = Path(src), Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = str(dst) + ".part"
+
+    with _publish_lock(lock_dir):
+        written = since = 0
+        t0 = _time.monotonic()
+        with open(src, "rb") as fi, open(tmp, "wb") as fo:
+            while True:
+                buf = fi.read(chunk)
+                if not buf:
+                    break
+                fo.write(buf)
+                written += len(buf)
+                since += len(buf)
+                if since >= fsync_every:
+                    fo.flush()
+                    _fdatasync(fo.fileno())
+                    since = 0
+                if bwlimit > 0:
+                    expected = written / (bwlimit * 1_000_000)
+                    dt = expected - (_time.monotonic() - t0)
+                    if dt > 0:
+                        _time.sleep(dt)
+            fo.flush()
+            _fdatasync(fo.fileno())
+        os.replace(tmp, dst)  # atomic publish
+    try:
+        src.unlink()
+    except OSError:
+        pass
+
+
+def _await_staging_capacity(staging_dir):
+    """Backpressure: block until staged-but-unpublished bytes are under the cap
+    so parallel downloads can't outrun the serialized publisher and fill the
+    local disk.  Best-effort, bounded by a safety deadline."""
+    import time as _time
+    cap = _int_env("MEGA_MAX_STAGED_BYTES", 8 << 30)  # 8 GB
+    if cap <= 0:
+        return
+    deadline = _time.monotonic() + 1800  # 30 min safety cap — never wait forever
+    warned = False
+    while _time.monotonic() < deadline:
+        staged = 0
+        try:
+            for p in staging_dir.glob("*"):
+                if p.is_file() and p.name != ".publish.lock":
+                    try:
+                        staged += p.stat().st_size
+                    except OSError:
+                        pass
+        except OSError:
+            return
+        if staged < cap:
+            return
+        if not warned:
+            print(f"[mega-import] backpressure: {staged}B staged ≥ cap {cap}B — waiting for publisher", file=sys.stderr)
+            warned = True
+        _time.sleep(2)
+
+
+def _download_one(m, file_nid, file_node, dest_path, fname, target_file, expected_size, file_path, staging_dir=None):
+    """Download a single MEGA file with file-level resume, retry/backoff, and
+    (when staging_dir is given) local-staging + serialized publish to the dest.
+
+    Returns a result dict for the items list.  Retries transient failures
+    (network blips, mega.py request errors, publish errors) up to
+    MEGA_DOWNLOAD_RETRIES times; skips files already present at full size so
+    re-running an interrupted import is cheap and idempotent.
+    """
+    import time as _time
+
+    # Resume: a complete copy already at the destination → skip the transfer.
+    # mega.py writes to a temp file and only moves on success, so a file at
+    # `target_file` of the right size is genuinely complete, not partial.
+    if expected_size is not None and target_file.exists():
+        try:
+            if target_file.stat().st_size == expected_size:
+                print(f"[mega-import] skip (already complete): {target_file}", file=sys.stderr)
+                return {"path": file_path, "status": "ok", "saved_as": fname, "skipped": True}
+        except OSError:
+            pass
+
+    # Where mega.py writes: a local staging dir (then we publish to the dest),
+    # or straight to the dest (local-disk dest — no NFS hazard, fast path).
+    fetch_dir = staging_dir if staging_dir is not None else dest_path
+    fetch_target = (staging_dir / fname) if staging_dir is not None else target_file
+
+    retries = max(1, _int_env("MEGA_DOWNLOAD_RETRIES", 3))
+
+    def _attempt():
+        """One full fetch (+ publish if staging). Returns a warning string or
+        None on success; raises on failure."""
+        warning = None
+        try:
+            # mega.py expects file=(nid, node_dict). The method is `download`,
+            # NOT `download_file` (that name doesn't exist on the Mega class).
+            m.download((file_nid, file_node), dest_path=str(fetch_dir), dest_filename=fname)
+        except ValueError as e:
+            # mega.py's post-download MAC verification is buggy for many files
+            # (https://github.com/odwyersoftware/mega.py/issues/61).  The fully
+            # decrypted bytes are still in /tmp/megapy_* — rescue them into the
+            # fetch dir, then fall through to publish.
+            if "mismatched mac" in str(e).lower() and _rescue_mac_tempfile(fetch_target, expected_size):
+                warning = "mac-check-skipped"
+                print(f"[mega-import] MAC failed but rescued temp file → {fetch_target} ({expected_size}b)", file=sys.stderr)
+            else:
+                raise
+        if staging_dir is not None:
+            _publish(fetch_target, target_file, staging_dir)
+        return warning
+
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            warning = _attempt()
+            result = {"path": file_path, "status": "ok", "saved_as": fname}
+            if warning:
+                result["warning"] = warning
+            return result
+        except ValueError as e:
+            last_err = f"ValueError: {str(e)[:400]}"
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {str(e)[:400]}"
+
+        if attempt < retries:
+            backoff = min(2 ** (attempt - 1), 15)
+            print(
+                f"[mega-import] download attempt {attempt}/{retries} failed for "
+                f"{file_path!r}: {last_err} — retrying in {backoff}s",
+                file=sys.stderr,
+            )
+            _time.sleep(backoff)
+
+    print(f"[mega-import] download failed path={file_path!r} after {retries} attempts: {last_err}", file=sys.stderr)
+    return {"path": file_path, "status": "error", "error": last_err}
+
+
 def action_download(args):
     paths = args.get("paths") or []
     dest = args.get("dest") or DEFAULT_DEST
@@ -854,6 +1173,15 @@ def action_download(args):
     forced_name = args.get("dest_filename")
     dest_path = Path(dest).expanduser().resolve()
     dest_path.mkdir(parents=True, exist_ok=True)
+
+    # Anti-NFS-saturation: when the dest is a network filesystem, download to a
+    # local staging dir and publish serialized + fsync-paced (see _publish).
+    # Local dest → no staging, direct download (unchanged fast path).
+    staging_dir = None
+    if _should_stage(dest_path):
+        staging_dir = _staging_dir()
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[mega-import] NFS-safe mode: staging in {staging_dir} → serialized publish to {dest_path}", file=sys.stderr)
 
     m = _get_mega()
     files = _cached_get_files(m)
@@ -891,48 +1219,13 @@ def action_download(args):
                 fname = _slugify_filename(raw_fname)
             expected_size = file_node.get("s")
             target_file = dest_path / fname
+            # Backpressure: don't let parallel downloads outrun the publisher.
+            if staging_dir is not None:
+                _await_staging_capacity(staging_dir)
             print(f"[mega-import] downloading {file_path!r} → {target_file} (raw={raw_fname!r}, size={expected_size})", file=sys.stderr)
-            try:
-                # mega.py expects file=(nid, node_dict). The method is `download`,
-                # NOT `download_file` (that name doesn't exist on the Mega class).
-                m.download((file_nid, file_node), dest_path=str(dest_path), dest_filename=fname)
-                items.append({"path": file_path, "status": "ok", "saved_as": fname})
-            except ValueError as e:
-                # mega.py's post-download MAC verification is buggy for many files
-                # (https://github.com/odwyersoftware/mega.py/issues/61).  When it
-                # raises, the fully-downloaded bytes are still sitting in a temp
-                # file like /tmp/megapy_XXXXX (mega.py used delete=False and
-                # raises BEFORE shutil.move()).  Find that orphan and move it.
-                if "mismatched mac" in str(e).lower() and expected_size is not None:
-                    import tempfile, glob, shutil as _shutil
-                    tmp_dir = tempfile.gettempdir()
-                    candidates = [
-                        Path(p) for p in glob.glob(str(Path(tmp_dir) / "megapy_*"))
-                        if Path(p).is_file()
-                    ]
-                    # Most-recent first, prefer exact size match.
-                    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-                    rescued = None
-                    for cand in candidates:
-                        try:
-                            if cand.stat().st_size == expected_size:
-                                _shutil.move(str(cand), str(target_file))
-                                rescued = target_file
-                                break
-                        except Exception:
-                            continue
-                    if rescued is not None:
-                        print(f"[mega-import] MAC failed but rescued temp file → {rescued} ({expected_size}b)", file=sys.stderr)
-                        items.append({"path": file_path, "status": "ok", "warning": "mac-check-skipped", "saved_as": fname})
-                        continue
-                    print(f"[mega-import] download failed path={file_path!r}: ValueError: {e} (no rescuable temp file in {tmp_dir})", file=sys.stderr)
-                    items.append({"path": file_path, "status": "error", "error": f"ValueError: {str(e)[:400]}"})
-                else:
-                    print(f"[mega-import] download failed path={file_path!r}: ValueError: {e}", file=sys.stderr)
-                    items.append({"path": file_path, "status": "error", "error": f"ValueError: {str(e)[:400]}"})
-            except Exception as e:
-                print(f"[mega-import] download failed path={file_path!r}: {type(e).__name__}: {e}", file=sys.stderr)
-                items.append({"path": file_path, "status": "error", "error": f"{type(e).__name__}: {str(e)[:400]}"})
+            items.append(_download_one(
+                m, file_nid, file_node, dest_path, fname, target_file, expected_size, file_path, staging_dir
+            ))
 
     return {"dest": str(dest_path), "items": items}
 
@@ -976,14 +1269,22 @@ def action_temp_progress(args):
 
 
 def action_cleanup_temp(args):
-    """Delete every /tmp/megapy_* file regardless of age.  Use sparingly —
-    will trash an in-flight download if you hit it during one.  Frontend
-    surfaces this as a Settings button."""
+    """Delete every /tmp/megapy_* temp and staged-but-unpublished file
+    regardless of age.  Use sparingly — will trash an in-flight download or a
+    file mid-publish if you hit it during one.  Frontend surfaces this as a
+    Settings button."""
     import tempfile, glob
     tmp_dir = tempfile.gettempdir()
     deleted = 0
     bytes_freed = 0
-    for path in glob.glob(str(Path(tmp_dir) / "megapy_*")):
+    # mega.py download temps + staging-dir orphans (staged files + .part sidecars).
+    targets = glob.glob(str(Path(tmp_dir) / "megapy_*"))
+    staging = _staging_dir()
+    if staging.exists():
+        for p in staging.glob("*"):
+            if p.is_file() and p.name != ".publish.lock":
+                targets.append(str(p))
+    for path in targets:
         try:
             sz = Path(path).stat().st_size
             Path(path).unlink()

@@ -33,7 +33,10 @@
     dest: "",
     filter: "all",
     customExts: "",
-    concurrency: 3,
+    // Default 1: safe out-of-the-box for NFS-backed dests. The backend now
+    // serializes NFS writes regardless (local staging + paced publish), so
+    // raising this only affects download parallelism — see TECHNICAL.md.
+    concurrency: 1,
     pageSize: 10,
     defaultSort: "size_asc",
     autoAddToLibrary: true,
