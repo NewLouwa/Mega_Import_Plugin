@@ -1451,6 +1451,29 @@ def _save_queue(q):
     os.replace(tmp, p)
 
 
+def _prune_orphans(max_age=3600):
+    """Delete megapy_* temp files and staging-dir leftovers older than max_age
+    (orphans from downloads that died).  An ACTIVE download keeps rewriting its
+    temp file, so its mtime stays fresh and it is never touched.  Called by the
+    worker (server-side, no UI needed) and by temp_progress."""
+    import tempfile, glob, time as _t
+    cutoff = _t.time() - max_age
+    pruned = 0
+    paths = list(glob.glob(str(Path(tempfile.gettempdir()) / "megapy_*")))
+    stg = _staging_dir()
+    if stg.exists():
+        paths += [str(p) for p in stg.glob("*") if p.name != ".publish.lock"]
+    for p in paths:
+        try:
+            pp = Path(p)
+            if pp.is_file() and pp.stat().st_mtime < cutoff:
+                pp.unlink()
+                pruned += 1
+        except OSError:
+            continue
+    return pruned
+
+
 def _pid_alive(pid):
     if not pid:
         return False
@@ -1559,13 +1582,32 @@ def action_enqueue(args):
 def action_queue_status(_args):
     q = _load_queue()
     items = q.get("items", [])
+    worker_alive = bool(q.get("worker_pid") and _pid_alive(q["worker_pid"]))
+    unfinished = any(it["status"] in ("pending", "downloading") for it in items)
+
+    # Self-heal: if there's work left but no live worker (it was killed by a
+    # restart/reboot/crash), requeue any stale "downloading" and respawn one.
+    # The worker's auth-failure path marks items "error", so this can't loop.
+    if unfinished and not worker_alive:
+        print("[mega-import] queue_status: work pending, no live worker — respawning", file=sys.stderr)
+        with _publish_lock(_queue_lock_dir()):
+            q = _load_queue()
+            for it in q["items"]:
+                if it["status"] == "downloading":
+                    it["status"] = "pending"
+            _save_queue(q)
+        _ensure_worker(_SERVER_CONNECTION)
+        q = _load_queue()
+        items = q.get("items", [])
+        worker_alive = bool(q.get("worker_pid") and _pid_alive(q["worker_pid"]))
+
     counts = {}
     for it in items:
         counts[it["status"]] = counts.get(it["status"], 0) + 1
     return {
         "items": items,
         "counts": counts,
-        "worker_alive": bool(q.get("worker_pid") and _pid_alive(q["worker_pid"])),
+        "worker_alive": worker_alive,
         "updated_at": q.get("updated_at", 0),
     }
 
@@ -1651,7 +1693,21 @@ def _worker_loop(server_connection):
         q = _load_queue()
         q["worker_pid"] = os.getpid()
         q["active"] = True
+        # We are the only worker (singleton). Any item still "downloading" is
+        # from a previous worker that died mid-file (kill / restart / reboot) —
+        # requeue it so this run retries it. (mega.py has no byte-level resume,
+        # so it restarts that file from zero, but it WILL resume the queue.)
+        requeued = 0
+        for it in q["items"]:
+            if it["status"] == "downloading":
+                it["status"] = "pending"
+                requeued += 1
         _save_queue(q)
+    if requeued:
+        print(f"[mega-import] worker requeued {requeued} interrupted item(s)", file=sys.stderr)
+    pruned = _prune_orphans()  # clear dead temp/staging blobs from prior runs
+    if pruned:
+        print(f"[mega-import] worker pruned {pruned} orphan temp file(s)", file=sys.stderr)
     try:
         m = _get_mega()
         conn = _get_tree(m)
