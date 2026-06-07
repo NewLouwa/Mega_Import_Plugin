@@ -687,66 +687,81 @@
       }
     },
 
+    // Enqueue paths to the BACKEND download queue (a detached worker downloads
+    // them independently of the browser — closing the tab no longer stops the
+    // import, since Stash and the downloads run on the same host). We then poll
+    // queue_status to drive the progress UI. `concurrency` is currently handled
+    // server-side (sequential, NFS-safe) and ignored here.
     async downloadFiles(paths, destOverride, onProgress, signal, concurrency, opts) {
       const options = opts || {};
-      // Normalize: accept either ["a/b/c.jpg"] or [{path:"a/b/c.jpg", size:12345}].
-      // Size is used to compute a per-file timeout (slow connection-tolerant).
-      const items = paths.map(p => typeof p === "string"
-        ? { path: p, size: undefined, destFilename: undefined }
-        : { path: p.path, size: p.size, destFilename: p.destFilename });
-      const total = items.length;
-      const conc = Math.max(1, Math.min(concurrency || 1, MAX_CONCURRENCY));
-      const allItems = [];
-      let resolvedDest = null;
-      let nextIndex = 0;
-      let completed = 0;
-      let inFlight = 0;
+      const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+      const pathList = paths.map(p => (typeof p === "string" ? p : p.path));
+      const single = paths.length === 1 && typeof paths[0] === "object" && paths[0].destFilename;
 
-      const downloadOne = async (item) => {
-        const taskArgs = { paths: [item.path] };
-        if (destOverride) taskArgs.dest = destOverride;
-        if (item.destFilename) taskArgs.dest_filename = item.destFilename;
-        try {
-          // Stall-guarded: no wall-clock timeout while bytes keep arriving;
-          // aborts only after a stretch of zero new data (see _runDownload).
-          const resp = await this._runDownload(taskArgs, item.size);
-          if (resp.dest && !resolvedDest) resolvedDest = resp.dest;
-          return (resp.items && resp.items[0]) || { path: item.path, status: "error", error: "no result" };
-        } catch (e) {
-          return { path: item.path, status: "error", error: e.message || String(e) };
-        }
-      };
+      const enqArgs = { paths: pathList };
+      if (destOverride) enqArgs.dest = destOverride;
+      if (single) enqArgs.dest_filename = paths[0].destFilename;
 
-      const worker = async () => {
+      const enq = await this._runTask("enqueue", enqArgs);
+      const ids = (enq && enq.ids) || [];
+      const idset = new Set(ids);
+      const total = ids.length;
+      const enqErrors = (enq && enq.errors) || [];
+
+      let allItems = [];
+      let resolvedDest = destOverride || null;
+      let deadPolls = 0;
+
+      // Poll until our enqueued items are all terminal (or the user aborts, or
+      // the worker dies). The download itself keeps running even if we stop.
+      if (total > 0) {
         while (true) {
-          if (signal && signal.aborted) return;
-          const myIndex = nextIndex++;
-          if (myIndex >= total) return;
-          const item = items[myIndex];
-          const filePath = item.path;
-          inFlight++;
-          if (onProgress) onProgress({ completed, total, inFlight, current: filePath, lastResult: null });
+          if (signal && signal.aborted) {
+            try { await this._runTask("queue_clear", {}); } catch (e) { /* best effort */ }
+            const st = await this._runTask("queue_status", {}).catch(() => ({}));
+            allItems = (st.items || []).filter(it => idset.has(it.id));
+            break;
+          }
+          let st;
+          try { st = await this._runTask("queue_status", {}); }
+          catch (e) { await sleep(2000); continue; }
 
-          const itemResult = await downloadOne(item);
-          allItems.push(itemResult);
-          inFlight--;
-          completed++;
+          const mine = (st.items || []).filter(it => idset.has(it.id));
+          if (mine.length && mine[0].dest && !resolvedDest) resolvedDest = mine[0].dest;
+          const done = mine.filter(it => it.status === "ok" || it.status === "error");
+          const downloading = mine.find(it => it.status === "downloading");
+          if (onProgress) onProgress({
+            completed: done.length, total,
+            inFlight: downloading ? 1 : 0,
+            current: downloading ? downloading.path : null,
+            lastResult: null,
+          });
 
-          // Record live so the "imported" indicator updates as we go.
-          HistoryStore.record([{
-            path: itemResult.path,
-            dest: resolvedDest,
-            status: itemResult.status,
-            ts: Date.now(),
-            error: itemResult.error || null,
-          }]);
+          if (mine.length >= total && done.length >= total) { allItems = mine; break; }
 
-          if (onProgress) onProgress({ completed, total, inFlight, current: null, lastResult: itemResult });
+          // Worker gone but items still unfinished → give it a few polls (spawn
+          // race), then treat leftovers as failed so we don't poll forever.
+          if (!st.worker_alive) {
+            if (++deadPolls >= 3) {
+              allItems = mine.map(it =>
+                (it.status === "ok" || it.status === "error") ? it
+                  : { ...it, status: "error", error: "worker stopped" });
+              break;
+            }
+          } else { deadPolls = 0; }
+
+          await sleep(2000);
         }
-      };
+      }
 
-      // Spin up workers; await all to drain.
-      await Promise.all(Array.from({ length: Math.min(conc, total) }, () => worker()));
+      // Surface enqueue-time path errors (not-found, etc.) as failed items.
+      enqErrors.forEach(e => allItems.push({ path: e.path, status: "error", error: e.error }));
+
+      // Record history for every resolved item.
+      allItems.forEach(it => HistoryStore.record([{
+        path: it.path, dest: resolvedDest, status: it.status,
+        ts: Date.now(), error: it.error || null,
+      }]));
 
       const ok = allItems.filter(i => i.status === "ok");
 

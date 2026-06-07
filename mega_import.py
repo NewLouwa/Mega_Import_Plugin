@@ -1409,6 +1409,304 @@ def action_download(args):
     return {"dest": str(dest_path), "items": items}
 
 
+# ---------------------------------------------------------------------------
+# Background download queue (survives the UI / browser).
+#
+# Stash kills a plugin subprocess the moment the client (browser) disconnects,
+# so a synchronous download dies when the tab closes.  Both Stash and the
+# downloads run on the same (often remote) host — the browser is just a remote
+# control and shouldn't need to stay open.  So we enqueue files to a JSON queue
+# and process them in a DETACHED worker process (NOT a child of the
+# runPluginOperation call, so Stash can't kill it).  The UI only enqueues and
+# polls status; closing the tab leaves the worker downloading.
+# ---------------------------------------------------------------------------
+_SERVER_CONNECTION = {}
+
+
+def _now():
+    import time as _t
+    return _t.time()
+
+
+def _queue_file():
+    return Path(os.environ.get("MEGA_QUEUE_FILE") or (Path(_tempfile.gettempdir()) / "mega_queue.json"))
+
+
+def _queue_lock_dir():
+    return Path(_tempfile.gettempdir()) / "mega_queue_lock"
+
+
+def _load_queue():
+    try:
+        return json.loads(_queue_file().read_text(encoding="utf-8"))
+    except Exception:
+        return {"items": [], "worker_pid": None, "active": False, "updated_at": 0}
+
+
+def _save_queue(q):
+    q["updated_at"] = _now()
+    p = _queue_file()
+    tmp = str(p) + ".tmp"
+    Path(tmp).write_text(json.dumps(q), encoding="utf-8")
+    os.replace(tmp, p)
+
+
+def _pid_alive(pid):
+    if not pid:
+        return False
+    try:
+        pid = int(pid)
+        if sys.platform.startswith("win"):
+            import ctypes
+            k = ctypes.windll.kernel32
+            h = k.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                return False
+            code = ctypes.c_ulong()
+            k.GetExitCodeProcess(h, ctypes.byref(code))
+            k.CloseHandle(h)
+            return code.value == 259  # STILL_ACTIVE
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+
+def _spawn_worker(server_connection):
+    import subprocess
+    payload = json.dumps({"action": "__worker", "server_connection": server_connection or {}}).encode("utf-8")
+    logf = open(str(_queue_file()) + ".worker.log", "ab")
+    kwargs = {"stdin": subprocess.PIPE, "stdout": logf, "stderr": logf, "close_fds": True}
+    if sys.platform.startswith("win"):
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP → not tied to Stash's job
+        kwargs["creationflags"] = 0x00000008 | 0x00000200
+    else:
+        kwargs["start_new_session"] = True  # new session → survives parent death
+    proc = subprocess.Popen([sys.executable, os.path.abspath(__file__)], **kwargs)
+    try:
+        proc.stdin.write(payload)
+        proc.stdin.close()
+    except Exception:
+        pass
+    return proc.pid
+
+
+def _ensure_worker(server_connection):
+    with _publish_lock(_queue_lock_dir()):
+        q = _load_queue()
+        if q.get("worker_pid") and _pid_alive(q["worker_pid"]):
+            return q["worker_pid"]
+        pid = _spawn_worker(server_connection)
+        q["worker_pid"] = pid
+        q["active"] = True
+        _save_queue(q)
+        return pid
+
+
+def action_enqueue(args):
+    """Expand the requested paths to individual files and append them to the
+    background queue, then ensure the detached worker is running.  Returns
+    immediately — the worker downloads independently of the UI."""
+    paths = args.get("paths") or []
+    dest = args.get("dest") or DEFAULT_DEST
+    forced_name = args.get("dest_filename")
+    dest_abs = str(Path(dest).expanduser().resolve())
+
+    m = _get_mega()
+    conn = _get_tree(m)
+    new_items, errors = [], []
+    try:
+        for remote in paths:
+            if not remote.startswith("/"):
+                remote = "/" + remote
+            try:
+                handle, _ = _db_resolve(conn, remote)
+            except MegaError:
+                errors.append({"path": remote, "error": "Path not found in MEGA"})
+                continue
+            trow = conn.execute("SELECT type FROM nodes WHERE handle=?", (handle,)).fetchone()
+            is_folder = trow is not None and trow["type"] == 1
+            if is_folder:
+                files = [(r["path"], r["size"]) for r in _db_collect_files(conn, handle)]
+            else:
+                fr = conn.execute("SELECT path, size FROM nodes WHERE handle=?", (handle,)).fetchone()
+                files = [(fr["path"], fr["size"])] if fr else []
+            single = (len(paths) == 1 and not is_folder)
+            for fp, sz in files:
+                new_items.append({
+                    "path": fp, "size": sz, "dest": dest_abs,
+                    "dest_filename": forced_name if single else None,
+                    "status": "pending", "error": None, "saved_as": None, "added_at": _now(),
+                })
+    finally:
+        conn.close()
+
+    ids = []
+    with _publish_lock(_queue_lock_dir()):
+        q = _load_queue()
+        base = len(q["items"])
+        stamp = int(_now())
+        for i, it in enumerate(new_items):
+            it["id"] = f"{stamp}-{base + i}"
+            ids.append(it["id"])
+        q["items"].extend(new_items)
+        _save_queue(q)
+
+    pid = _ensure_worker(_SERVER_CONNECTION)
+    return {"queued": len(new_items), "ids": ids, "errors": errors, "worker_pid": pid}
+
+
+def action_queue_status(_args):
+    q = _load_queue()
+    items = q.get("items", [])
+    counts = {}
+    for it in items:
+        counts[it["status"]] = counts.get(it["status"], 0) + 1
+    return {
+        "items": items,
+        "counts": counts,
+        "worker_alive": bool(q.get("worker_pid") and _pid_alive(q["worker_pid"])),
+        "updated_at": q.get("updated_at", 0),
+    }
+
+
+def action_queue_clear(args):
+    """Drop queue items.  By default removes everything except the file
+    currently downloading; pass only_done=true to keep pending+downloading."""
+    only_done = bool(args.get("only_done"))
+    with _publish_lock(_queue_lock_dir()):
+        q = _load_queue()
+        keep = ("pending", "downloading") if only_done else ("downloading",)
+        q["items"] = [it for it in q["items"] if it["status"] in keep]
+        _save_queue(q)
+    return {"remaining": len(_load_queue().get("items", []))}
+
+
+def _worker_download(m, conn, item):
+    """Download one queued file (path → node → _download_one)."""
+    dest_path = Path(item["dest"]).expanduser().resolve()
+    dest_path.mkdir(parents=True, exist_ok=True)
+    staging_dir = None
+    if _should_stage(dest_path):
+        staging_dir = _staging_dir()
+        staging_dir.mkdir(parents=True, exist_ok=True)
+    row = conn.execute(
+        "SELECT handle, size, node_json FROM nodes WHERE path=? AND type=0 LIMIT 1", (item["path"],)
+    ).fetchone()
+    if not row or not row["node_json"]:
+        return {"status": "error", "error": "file no longer in tree index"}
+    file_node = json.loads(row["node_json"])
+    raw = (file_node.get("a") or {}).get("n", "download")
+    fname = _slugify_filename(item.get("dest_filename") or raw)
+    target = dest_path / fname
+    if staging_dir is not None:
+        _await_staging_capacity(staging_dir)
+    return _download_one(m, row["handle"], file_node, dest_path, fname, target,
+                         row["size"], item["path"], staging_dir)
+
+
+def _gql(server_connection, query, variables=None):
+    import requests
+    sc = server_connection or {}
+    scheme = (sc.get("Scheme") or "http").lower()
+    port = sc.get("Port") or 9999
+    url = f"{scheme}://localhost:{port}/graphql"
+    cookies = {}
+    sk = sc.get("SessionCookie") or {}
+    if sk.get("Name"):
+        cookies[sk["Name"]] = sk.get("Value", "")
+    r = requests.post(url, json={"query": query, "variables": variables or {}}, cookies=cookies, timeout=120)
+    return r.json()
+
+
+def _post_import(server_connection, dests):
+    """After the queue drains: register each dest as a library path and trigger
+    a scan — via Stash's GraphQL using the session from server_connection — so
+    imports appear without the UI doing anything."""
+    if not server_connection or not dests:
+        return
+    try:
+        cfg = _gql(server_connection, "{configuration{general{stashes{path excludeImage excludeVideo}}}}")
+        stashes = (((cfg or {}).get("data") or {}).get("configuration") or {}).get("general", {}).get("stashes", []) or []
+    except Exception as e:
+        print(f"[mega-import] post-import: cannot read config: {e}", file=sys.stderr)
+        return
+    have = {s["path"] for s in stashes}
+    to_add = [d for d in dests if d not in have]
+    if to_add:
+        newst = [{"path": s["path"], "excludeImage": s.get("excludeImage", False),
+                  "excludeVideo": s.get("excludeVideo", False)} for s in stashes]
+        newst += [{"path": d, "excludeImage": False, "excludeVideo": False} for d in to_add]
+        _gql(server_connection,
+             "mutation($i:ConfigGeneralInput!){configureGeneral(input:$i){stashes{path}}}",
+             {"i": {"stashes": newst}})
+        print(f"[mega-import] post-import: added to library: {to_add}", file=sys.stderr)
+    _gql(server_connection, "mutation{metadataScan(input:{})}")
+    print("[mega-import] post-import: scan triggered", file=sys.stderr)
+
+
+def _worker_loop(server_connection):
+    print(f"[mega-import] worker started pid={os.getpid()}", file=sys.stderr)
+    with _publish_lock(_queue_lock_dir()):
+        q = _load_queue()
+        q["worker_pid"] = os.getpid()
+        q["active"] = True
+        _save_queue(q)
+    try:
+        m = _get_mega()
+        conn = _get_tree(m)
+    except Exception as e:
+        print(f"[mega-import] worker auth/tree failed: {e}", file=sys.stderr)
+        with _publish_lock(_queue_lock_dir()):
+            q = _load_queue()
+            q["active"] = False
+            q["worker_pid"] = None
+            for it in q["items"]:
+                if it["status"] in ("pending", "downloading"):
+                    it["status"] = "error"
+                    it["error"] = f"worker: {e}"
+            _save_queue(q)
+        return
+
+    dests = set()
+    try:
+        while True:
+            with _publish_lock(_queue_lock_dir()):
+                q = _load_queue()
+                item = next((it for it in q["items"] if it["status"] == "pending"), None)
+                if item is None:
+                    q["active"] = False
+                    q["worker_pid"] = None
+                    _save_queue(q)
+                    break
+                item["status"] = "downloading"
+                item["started_at"] = _now()
+                _save_queue(q)
+            try:
+                res = _worker_download(m, conn, item)
+            except Exception as e:
+                res = {"status": "error", "error": f"{type(e).__name__}: {str(e)[:400]}"}
+            dests.add(item["dest"])
+            with _publish_lock(_queue_lock_dir()):
+                q = _load_queue()
+                for it in q["items"]:
+                    if it.get("id") == item["id"]:
+                        it.update(res)
+                        it["finished_at"] = _now()
+                _save_queue(q)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    try:
+        _post_import(server_connection, dests)
+    except Exception as e:
+        print(f"[mega-import] post-import failed: {e}", file=sys.stderr)
+    print("[mega-import] worker finished", file=sys.stderr)
+
+
 def action_temp_progress(args):
     """Snapshot of active mega.py download temp files.
 
@@ -1532,6 +1830,9 @@ ACTIONS = {
     "temp_progress": action_temp_progress,
     "cleanup_temp": action_cleanup_temp,
     "download": action_download,
+    "enqueue": action_enqueue,
+    "queue_status": action_queue_status,
+    "queue_clear": action_queue_clear,
 }
 
 
@@ -1571,10 +1872,22 @@ def main():
         _write(None, "args must be an object")
         return
 
+    # Capture the server connection (scheme/port/session cookie) so the detached
+    # worker can call back into Stash (library-add + scan) after downloading.
+    global _SERVER_CONNECTION
+    if isinstance(payload, dict) and isinstance(payload.get("server_connection"), dict):
+        _SERVER_CONNECTION = payload["server_connection"]
+
     action = args.get("action")
     if not action:
         _write(None, "missing 'action'")
         return
+
+    # The detached background worker is not a normal request/response action —
+    # it loops until the queue drains and writes status to the queue file.
+    if action == "__worker":
+        _worker_loop(_SERVER_CONNECTION)
+        sys.exit(0)
 
     handler = ACTIONS.get(action)
     if not handler:
