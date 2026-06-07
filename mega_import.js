@@ -23,7 +23,7 @@
   const OPEN_LOGIN_EVENT = "mega-import:open-login";
   const PLUGIN_ID = "mega_import";
   const TASK_NAME = "MEGA Operation";
-  const SESSION_STORAGE_KEY = "mega-import:session";
+  const SESSION_STORAGE_KEY = "mega-import:session"; // persisted in localStorage (survives restarts)
   const SETTINGS_STORAGE_KEY = "mega-import:settings";
   const HISTORY_STORAGE_KEY = "mega-import:history";
   const PATH_CACHE_KEY = "mega-import:path-cache";
@@ -332,10 +332,12 @@
     },
 
     _emitSessionChange() {
-      // Persist to sessionStorage so a page reload on /mega-browser survives.
+      // Persist to localStorage so the session (and its token) survives a tab
+      // close / browser restart — not just a same-tab reload.  The token lets
+      // us re-establish the server session later without re-solving the PoW.
       try {
-        if (this._session) sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(this._session));
-        else sessionStorage.removeItem(SESSION_STORAGE_KEY);
+        if (this._session) localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(this._session));
+        else localStorage.removeItem(SESSION_STORAGE_KEY);
       } catch (e) { logError("session persist", e); }
       this._listeners.forEach(cb => {
         try { cb(this._session); } catch (e) { logError("session listener", e); }
@@ -344,9 +346,38 @@
 
     _hydrateSession() {
       try {
-        const raw = sessionStorage.getItem(SESSION_STORAGE_KEY);
+        // Migrate any legacy sessionStorage entry to localStorage, then read.
+        let raw = localStorage.getItem(SESSION_STORAGE_KEY);
+        if (!raw) {
+          const legacy = sessionStorage.getItem(SESSION_STORAGE_KEY);
+          if (legacy) { raw = legacy; localStorage.setItem(SESSION_STORAGE_KEY, legacy); sessionStorage.removeItem(SESSION_STORAGE_KEY); }
+        }
         if (raw) this._session = JSON.parse(raw);
       } catch (e) { logError("session hydrate", e); }
+    },
+
+    // Re-establish the server-side session from the stored token, WITHOUT a
+    // password prompt or PoW.  Called once at startup (after the Apollo client
+    // is ready).  The stored token is the source of truth: if it still works
+    // we're silently logged in; if MEGA rejects it (expired / server session
+    // gone), we clear it so the normal login prompt takes over.  A successful
+    // re-login refreshes and re-stores the token.
+    async validateSession() {
+      if (this._validateStarted) return this._session;
+      this._validateStarted = true;
+      const cached = this._session;            // from _hydrateSession at module load
+      if (!cached) return null;                // nothing stored → stay logged out
+      if (!cached.sessionToken) {              // incomplete legacy entry → clear
+        this._session = null; this._emitSessionChange(); return null;
+      }
+      try {
+        await this.loginWithToken(cached.sessionToken);   // no PoW; refreshes token in storage
+        console.log("[mega-import] session restored from stored token (no PoW)");
+      } catch (e) {
+        console.warn("[mega-import] stored token rejected — clearing, login required:", e.message);
+        this._session = null; this._emitSessionChange();
+      }
+      return this._session;
     },
 
     _setApolloClient(client) { this._client = client; },
@@ -768,7 +799,13 @@
   // queries. Mounted inside NavbarPlugin.
   const ApolloCapture = () => {
     const client = useApolloClient();
-    React.useEffect(() => { MegaApiClient._setApolloClient(client); }, [client]);
+    React.useEffect(() => {
+      MegaApiClient._setApolloClient(client);
+      // Now that we can talk to the backend, silently re-establish the session
+      // from the stored token (no prompt / no PoW). Falls back to the login
+      // prompt only if the token is rejected. Runs at most once.
+      MegaApiClient.validateSession();
+    }, [client]);
     return null;
   };
 
@@ -1119,7 +1156,7 @@
   const MegaBrowserPage = () => {
     const session = useSession();
     console.log("[mega-import] MegaBrowserPage render — session=", session,
-      "sessionStorage=", (typeof sessionStorage !== "undefined" ? sessionStorage.getItem(SESSION_STORAGE_KEY) : null));
+      "localStorage=", (typeof localStorage !== "undefined" ? localStorage.getItem(SESSION_STORAGE_KEY) : null));
     const [files, setFiles] = React.useState([]);
     const [currentPath, setCurrentPath] = React.useState("/");
     const [selectedItems, setSelectedItems] = React.useState([]);
