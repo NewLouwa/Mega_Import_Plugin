@@ -60,6 +60,15 @@ import random
 import sys
 from pathlib import Path
 
+# Stash captures the plugin subprocess's stderr through a pipe, which makes
+# Python block-buffer it — so progress lines (e.g. the multi-minute "Solving
+# hashcash…") only surface when the process exits, making a slow login look
+# frozen.  Force line buffering so every [mega-import] line appears live.
+try:
+    sys.stderr.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
 # ---------------------------------------------------------------------------
 # Compatibility: asyncio.coroutine was removed in Python 3.11.
 # tenacity ≤ 5.x (and some older mega.py deps) still use it at import time.
