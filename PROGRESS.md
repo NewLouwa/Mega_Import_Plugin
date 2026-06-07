@@ -11,6 +11,10 @@ Local SQLite tree index — large-account browsing goes from seconds-per-click t
 ### Changed
 - Tree caching moved from the flat-JSON `/tmp/.mega_files_cache.json` to `tempfile.gettempdir()/.mega_tree.sqlite`. `cleanup_temp` / re-login behaviour unchanged.
 - Session/tree files now use `tempfile.gettempdir()` instead of a hardcoded `/tmp` (works on Windows/macOS; still `/tmp` on Linux).
+- `list`/`find`/`preview` UI timeout raised 5 → 15 min so the one-time full-tree fetch+ingest (3-5 min on a large account) can't time the UI out mid-ingest.
+
+### Fixed
+- **Disconnect button** could appear dead: `logout()` now clears local state immediately and runs the server-side cleanup in the background, and the browser page no longer re-pops the login modal the instant you disconnect.
 
 ## v1.1.0 — Unreleased
 

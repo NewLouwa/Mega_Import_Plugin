@@ -388,10 +388,12 @@
     // All other actions are fast network/IO calls capped at 2 minutes.
     _timeoutMs(action, sizeBytes) {
       if (action === "login") return 10 * 60 * 1000;  // 10 min — PoW may take 3-5 min
-      // list/find walk the entire MEGA tree on first call; multi-TB accounts
-      // can take 1-3 min.  After the first call the on-disk cache makes them
-      // near-instant.
-      if (action === "list" || action === "find" || action === "preview") return 5 * 60 * 1000;
+      // list/find/preview trigger a one-time full-tree fetch + SQLite ingest on
+      // the first call after login (or after the 24h index TTL). On a large
+      // account that fetch alone measured 3-5 min, so allow 15 min — otherwise
+      // the UI times out while the backend is still (correctly) ingesting.
+      // Every subsequent navigation is an indexed query (~ms).
+      if (action === "list" || action === "find" || action === "preview") return 15 * 60 * 1000;
       if (action === "download") {
         // Pessimistic: assume 200 KB/s throughput. Add 60s overhead for
         // hashcash retries / connection setup. Floor at 2 min, cap at 1 hour
@@ -786,10 +788,13 @@
     },
 
     async logout() {
-      try { await this._runTask("logout", {}); }
-      catch (e) { logError("logout", e); /* clear local state regardless */ }
+      // Clear local state FIRST so the UI logs out instantly and reliably,
+      // even if the backend is slow/busy (otherwise the Disconnect button
+      // appears dead while it waits). Server-side session cleanup is
+      // best-effort and runs in the background.
       this._session = null;
       this._emitSessionChange();
+      this._runTask("logout", {}).catch(e => logError("logout", e));
     },
   };
 
@@ -1300,12 +1305,12 @@
       [visibleFiles]
     );
 
-    // Redirect on unauthenticated visit (initial load OR logout-elsewhere).
+    // Redirect on unauthenticated visit (initial load OR after Disconnect).
+    // Just go home — don't auto-pop the login modal, otherwise clicking
+    // Disconnect immediately re-prompts and looks like it didn't work. The
+    // user can click the MEGA navbar button to log in again.
     React.useEffect(() => {
-      if (!session) {
-        navigateTo("/");
-        requestLogin();
-      }
+      if (!session) navigateTo("/");
     }, [session]);
 
     const [isStale, setIsStale] = React.useState(false);
