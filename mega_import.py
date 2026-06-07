@@ -1265,11 +1265,32 @@ def _await_staging_capacity(staging_dir):
         _time.sleep(2)
 
 
+class _DownloadPaused(Exception):
+    """Raised to stop an in-flight download but KEEP the partial (resumable)."""
+
+
+class _DownloadCancelled(Exception):
+    """Raised to stop an in-flight download and DISCARD the partial."""
+
+
 def _partials_dir():
     return Path(os.environ.get("MEGA_PARTIALS_DIR") or (Path(_tempfile.gettempdir()) / "mega_partials"))
 
 
-def _resumable_download(m, handle, node, out_dir, fname, expected_size):
+def _partial_path(handle):
+    return _partials_dir() / (str(handle).replace("/", "_") + ".part")
+
+
+def _delete_partial(handle):
+    if not handle:
+        return
+    try:
+        _partial_path(handle).unlink()
+    except OSError:
+        pass
+
+
+def _resumable_download(m, handle, node, out_dir, fname, expected_size, stop_check=None):
     """Download a MEGA file with BYTE-LEVEL resume.
 
     mega.py can't resume an interrupted file (it restarts from zero and discards
@@ -1292,9 +1313,8 @@ def _resumable_download(m, handle, node, out_dir, fname, expected_size):
     k_str = a32_to_str(k)
     base_ctr = ((iv[0] << 32) + iv[1]) << 64
 
-    pdir = _partials_dir()
-    pdir.mkdir(parents=True, exist_ok=True)
-    partial = pdir / (str(handle).replace("/", "_") + ".part")
+    _partials_dir().mkdir(parents=True, exist_ok=True)
+    partial = _partial_path(handle)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     final = out_dir / fname
@@ -1326,6 +1346,8 @@ def _resumable_download(m, handle, node, out_dir, fname, expected_size):
     ctr = Counter.new(128, initial_value=base_ctr + (offset // 16))
     aes = AES.new(k_str, AES.MODE_CTR, counter=ctr)
 
+    import time as _t
+    last_check = _t.time()
     with open(partial, "r+b" if (offset > 0 and partial.exists()) else "wb") as fo:
         fo.seek(offset)
         fo.truncate(offset)
@@ -1343,6 +1365,15 @@ def _resumable_download(m, handle, node, out_dir, fname, expected_size):
             if since >= (16 << 20):
                 fo.flush()
                 since = 0
+            # Cooperative per-file stop (pause/cancel) — checked ~every 1.5s so
+            # it doesn't read the queue on every 1 MB chunk. The partial is
+            # flushed first, so a pause keeps every byte already received.
+            if stop_check is not None and (_t.time() - last_check) >= 1.5:
+                last_check = _t.time()
+                sig = stop_check()
+                if sig in ("pause", "cancel"):
+                    fo.flush()
+                    raise (_DownloadCancelled() if sig == "cancel" else _DownloadPaused())
 
     got = partial.stat().st_size
     if size and got != size:
@@ -1352,7 +1383,7 @@ def _resumable_download(m, handle, node, out_dir, fname, expected_size):
     return final
 
 
-def _download_one(m, file_nid, file_node, dest_path, fname, target_file, expected_size, file_path, staging_dir=None):
+def _download_one(m, file_nid, file_node, dest_path, fname, target_file, expected_size, file_path, staging_dir=None, stop_check=None):
     """Download a single MEGA file with file-level resume, retry/backoff, and
     (when staging_dir is given) local-staging + serialized publish to the dest.
 
@@ -1386,7 +1417,7 @@ def _download_one(m, file_nid, file_node, dest_path, fname, target_file, expecte
         is kept so the next attempt resumes from where it stopped)."""
         # Custom resumable download (mega.py can't resume); writes the complete
         # decrypted file to fetch_dir/fname, continuing from any kept partial.
-        _resumable_download(m, file_nid, file_node, fetch_dir, fname, expected_size)
+        _resumable_download(m, file_nid, file_node, fetch_dir, fname, expected_size, stop_check)
         if staging_dir is not None:
             _publish(fetch_target, target_file, staging_dir)
         return None
@@ -1399,6 +1430,8 @@ def _download_one(m, file_nid, file_node, dest_path, fname, target_file, expecte
             if warning:
                 result["warning"] = warning
             return result
+        except (_DownloadPaused, _DownloadCancelled):
+            raise  # not a failure — let the worker record paused/cancelled
         except ValueError as e:
             last_err = f"ValueError: {str(e)[:400]}"
         except Exception as e:
@@ -1628,14 +1661,14 @@ def action_enqueue(args):
             trow = conn.execute("SELECT type FROM nodes WHERE handle=?", (handle,)).fetchone()
             is_folder = trow is not None and trow["type"] == 1
             if is_folder:
-                files = [(r["path"], r["size"]) for r in _db_collect_files(conn, handle)]
+                files = [(r["handle"], r["path"], r["size"]) for r in _db_collect_files(conn, handle)]
             else:
-                fr = conn.execute("SELECT path, size FROM nodes WHERE handle=?", (handle,)).fetchone()
-                files = [(fr["path"], fr["size"])] if fr else []
+                fr = conn.execute("SELECT handle, path, size FROM nodes WHERE handle=?", (handle,)).fetchone()
+                files = [(fr["handle"], fr["path"], fr["size"])] if fr else []
             single = (len(paths) == 1 and not is_folder)
-            for fp, sz in files:
+            for fh, fp, sz in files:
                 new_items.append({
-                    "path": fp, "size": sz, "dest": dest_abs,
+                    "handle": fh, "path": fp, "size": sz, "dest": dest_abs,
                     "dest_filename": forced_name if single else None,
                     "status": "pending", "error": None, "saved_as": None, "added_at": _now(),
                 })
@@ -1702,7 +1735,59 @@ def action_queue_clear(args):
     return {"remaining": len(_load_queue().get("items", []))}
 
 
-def _worker_download(m, conn, item):
+def _item_control(item_id):
+    """Current control flag ('pause'/'cancel'/None) for a queue item — read by
+    the worker between download chunks to stop cooperatively."""
+    for it in _load_queue().get("items", []):
+        if it.get("id") == item_id:
+            return it.get("control")
+    return None
+
+
+def action_queue_control(args):
+    """Per-file control: pause | resume | cancel a single queued item.
+
+    - pause:  stop downloading but KEEP the partial → resumes later from it.
+    - resume: re-queue a paused/errored/cancelled item (downloads from its partial).
+    - cancel: stop and DISCARD the partial.
+    A file mid-download is signalled via a `control` flag the worker polls; a
+    pending/paused one is updated directly.
+    """
+    item_id = args.get("id")
+    op = (args.get("op") or "").lower()
+    if not item_id or op not in ("pause", "resume", "cancel"):
+        raise MegaError("queue_control needs id + op in pause|resume|cancel", code="bad_args")
+    with _publish_lock(_queue_lock_dir()):
+        q = _load_queue()
+        it = next((x for x in q["items"] if x.get("id") == item_id), None)
+        if not it:
+            return {"ok": False, "error": "id not found"}
+        st = it.get("status")
+        if op == "pause":
+            if st == "downloading":
+                it["control"] = "pause"          # worker stops + marks paused
+            elif st == "pending":
+                it["status"] = "paused"
+                it.pop("control", None)
+        elif op == "resume":
+            if st in ("paused", "error", "cancelled"):
+                it["status"] = "pending"
+                it["error"] = None
+                it.pop("control", None)
+        elif op == "cancel":
+            if st == "downloading":
+                it["control"] = "cancel"          # worker stops + discards partial
+            else:
+                it["status"] = "cancelled"
+                it.pop("control", None)
+                _delete_partial(it.get("handle"))
+        _save_queue(q)
+    if op == "resume":
+        _ensure_worker(_SERVER_CONNECTION)
+    return {"ok": True, "op": op, "id": item_id}
+
+
+def _worker_download(m, conn, item, stop_check=None):
     """Download one queued file (path → node → _download_one)."""
     dest_path = Path(item["dest"]).expanduser().resolve()
     dest_path.mkdir(parents=True, exist_ok=True)
@@ -1722,7 +1807,7 @@ def _worker_download(m, conn, item):
     if staging_dir is not None:
         _await_staging_capacity(staging_dir)
     return _download_one(m, row["handle"], file_node, dest_path, fname, target,
-                         row["size"], item["path"], staging_dir)
+                         row["size"], item["path"], staging_dir, stop_check=stop_check)
 
 
 def _gql(server_connection, query, variables=None):
@@ -1773,12 +1858,13 @@ def _worker_loop(server_connection):
         q["active"] = True
         # We are the only worker (singleton). Any item still "downloading" is
         # from a previous worker that died mid-file (kill / restart / reboot) —
-        # requeue it so this run retries it. (mega.py has no byte-level resume,
-        # so it restarts that file from zero, but it WILL resume the queue.)
+        # requeue it so this run retries it; byte-level resume means it picks up
+        # from its kept partial blob, not from zero.
         requeued = 0
         for it in q["items"]:
             if it["status"] == "downloading":
                 it["status"] = "pending"
+                it.pop("control", None)
                 requeued += 1
         _save_queue(q)
     if requeued:
@@ -1815,18 +1901,33 @@ def _worker_loop(server_connection):
                     break
                 item["status"] = "downloading"
                 item["started_at"] = _now()
+                item.pop("control", None)  # clear any stale pause/cancel flag
                 _save_queue(q)
+            # Per-file cooperative stop: the worker polls the item's control flag
+            # between download chunks (set by action_queue_control).
+            res = None
+            stop_kind = None
             try:
-                res = _worker_download(m, conn, item)
+                res = _worker_download(m, conn, item, stop_check=lambda: _item_control(item["id"]))
+            except _DownloadPaused:
+                stop_kind = "paused"
+            except _DownloadCancelled:
+                stop_kind = "cancelled"
+                _delete_partial(item.get("handle"))
             except Exception as e:
                 res = {"status": "error", "error": f"{type(e).__name__}: {str(e)[:400]}"}
-            dests.add(item["dest"])
+            if res is not None:
+                dests.add(item["dest"])
             with _publish_lock(_queue_lock_dir()):
                 q = _load_queue()
                 for it in q["items"]:
                     if it.get("id") == item["id"]:
-                        it.update(res)
-                        it["finished_at"] = _now()
+                        it.pop("control", None)
+                        if stop_kind:
+                            it["status"] = stop_kind   # paused (keep partial) / cancelled
+                        else:
+                            it.update(res)
+                            it["finished_at"] = _now()
                 _save_queue(q)
     finally:
         try:
@@ -1842,26 +1943,28 @@ def _worker_loop(server_connection):
 
 
 def action_temp_progress(args):
-    """Snapshot of active mega.py download temp files.
+    """Snapshot of in-flight download blobs for the real-byte progress UI.
 
-    Returns [{name, size, mtime, age_s}] for every /tmp/megapy_* file.
-    The frontend uses this to plot the REAL byte progress for in-flight
-    downloads (matched heuristically against the rows it knows are downloading).
-
-    Also opportunistically prunes anything older than 1 hour — orphan temp
-    files from failed downloads accumulate quickly with multi-GB transfers.
+    Returns [{name, size, mtime, age_s, handle?}] for legacy `megapy_*` temps
+    and for resumable-download partials (`mega_partials/<handle>.part`, which
+    carry a `handle` so the UI can match a row to its exact partial). Also
+    opportunistically prunes anything older than 1 hour (orphans from dead
+    downloads); actively-written blobs keep a fresh mtime so they're kept.
     """
     import tempfile, glob, time as _time
     tmp_dir = tempfile.gettempdir()
     out = []
     cutoff_orphan = _time.time() - 3600  # 1h
     pruned = 0
-    for path in glob.glob(str(Path(tmp_dir) / "megapy_*")):
+    candidates = [(p, None) for p in glob.glob(str(Path(tmp_dir) / "megapy_*"))]
+    pdir = _partials_dir()
+    if pdir.exists():
+        candidates += [(str(p), p.stem) for p in pdir.glob("*.part")]  # stem = handle
+    for path, handle in candidates:
         try:
             st = Path(path).stat()
         except OSError:
             continue
-        # Auto-prune ancient temp files (download long since failed/abandoned).
         if st.st_mtime < cutoff_orphan:
             try:
                 Path(path).unlink()
@@ -1869,12 +1972,15 @@ def action_temp_progress(args):
                 continue
             except OSError:
                 pass
-        out.append({
+        entry = {
             "name": Path(path).name,
             "size": st.st_size,
             "mtime": st.st_mtime,
             "age_s": int(_time.time() - st.st_mtime),
-        })
+        }
+        if handle:
+            entry["handle"] = handle
+        out.append(entry)
     out.sort(key=lambda x: x["mtime"])
     return {"files": out, "pruned_orphans": pruned, "now": _time.time()}
 
@@ -1967,6 +2073,7 @@ ACTIONS = {
     "enqueue": action_enqueue,
     "queue_status": action_queue_status,
     "queue_clear": action_queue_clear,
+    "queue_control": action_queue_control,
 }
 
 

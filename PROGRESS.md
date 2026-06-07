@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.5.0 — 2026-06-07
+
+Per-file download controls: pause, resume, and cancel each file in the queue.
+
+### Added
+- **Per-file Pause / Resume / Cancel.** Each file in the import has its own ⏸ / ▶ / ✕ buttons.
+  - **Pause** stops that file mid-download but keeps its partial blob → **Resume** continues from the exact byte where it stopped (via the v1.4.0 resumable engine), no data lost.
+  - **Cancel** stops it and discards the partial.
+  - Resume also retries a failed/cancelled file.
+  Implemented cooperatively: a new `queue_control` action sets a per-item flag the detached worker polls between download chunks (~every 1.5 s), so it stops cleanly at a 16-byte boundary with the partial flushed. A pending (not-yet-started) item is updated directly. New action: `queue_control {id, op}`.
+- The progress panel now renders the **actual per-file queue items** (not the pre-expansion selection), each carrying its queue id + MEGA handle. `temp_progress` reports partial blobs with their `handle`, so each row's real-byte progress is matched **exactly** to its partial (no more heuristic guessing).
+- The panel stays **live after the import call returns** (polls `queue_status`), so a paused row reflects state when you resume it.
+
 ## v1.4.0 — 2026-06-07
 
 Resilient downloads: an interrupted transfer resumes from where it stopped, and the queue heals itself after a crash/restart.

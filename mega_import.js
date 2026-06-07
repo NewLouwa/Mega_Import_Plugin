@@ -537,9 +537,18 @@
     },
 
     async tempProgress() {
-      // [{name, size, mtime, age_s}] of /tmp/megapy_* — used to plot REAL
-      // byte progress for in-flight downloads.  Cheap (a stat() per file).
+      // [{name, size, mtime, age_s, handle?}] of in-flight blobs — used to plot
+      // REAL byte progress for downloads.  Cheap (a stat() per file).
       return this._runTask("temp_progress", {});
+    },
+
+    // Per-file download control: op = "pause" | "resume" | "cancel".
+    async queueControl(id, op) {
+      return this._runTask("queue_control", { id, op });
+    },
+
+    async queueStatus() {
+      return this._runTask("queue_status", {});
     },
 
     async cleanupTemp() {
@@ -728,16 +737,19 @@
 
           const mine = (st.items || []).filter(it => idset.has(it.id));
           if (mine.length && mine[0].dest && !resolvedDest) resolvedDest = mine[0].dest;
-          const done = mine.filter(it => it.status === "ok" || it.status === "error");
+          const active = mine.filter(it => it.status === "pending" || it.status === "downloading");
           const downloading = mine.find(it => it.status === "downloading");
           if (onProgress) onProgress({
-            completed: done.length, total,
+            completed: mine.length - active.length, total,
             inFlight: downloading ? 1 : 0,
             current: downloading ? downloading.path : null,
+            items: mine,            // per-file rows (id/status/handle/size) for the UI
             lastResult: null,
           });
 
-          if (mine.length >= total && done.length >= total) { allItems = mine; break; }
+          // Done when nothing is actively pending/downloading. Paused items are
+          // intentionally settled (the user can resume them from their row).
+          if (mine.length >= total && active.length === 0) { allItems = mine; break; }
 
           // Worker gone but items still unfinished → give it a few polls (spawn
           // race), then treat leftovers as failed so we don't poll forever.
@@ -1278,13 +1290,18 @@
             const next = prev.slice();
             const used = new Set();
             for (const { r, i } of downloading) {
-              // Find the first unused temp file whose size is plausible (≤ expected size + 10%).
+              // Exact match first: the resumable partial is named <handle>.part,
+              // so temp_progress reports its handle — pair it to this row.
               let pick = null;
-              for (const t of sortedTemps) {
-                if (used.has(t.name)) continue;
-                if (r.size && t.size > r.size * 1.1) continue;
-                pick = t;
-                break;
+              if (r.handle) pick = tempFiles.find(t => t.handle === r.handle);
+              // Fallback (legacy megapy_* temps): first plausible unused file.
+              if (!pick) {
+                for (const t of sortedTemps) {
+                  if (used.has(t.name)) continue;
+                  if (r.size && t.size > r.size * 1.1) continue;
+                  pick = t;
+                  break;
+                }
               }
               if (pick) {
                 used.add(pick.name);
@@ -1304,6 +1321,43 @@
       const id = setInterval(poll, 2000);
       return () => { cancelled = true; clearInterval(id); };
     }, [progressRows.map(r => r.status).join(",")]);
+
+    // Keep the per-file rows live (status) even after the import call resolves —
+    // e.g. so a paused row reflects when resumed. Polls queue_status while any
+    // row is still open (pending/downloading/paused) and merges by id.
+    React.useEffect(() => {
+      const hasOpen = progressRows.some(r => r.id && ["pending", "downloading", "paused"].includes(r.status));
+      if (!hasOpen) return;
+      let stop = false;
+      const poll = async () => {
+        try {
+          const st = await MegaApiClient.queueStatus();
+          if (stop) return;
+          const byId = {};
+          (st.items || []).forEach(it => { byId[it.id] = it; });
+          setProgressRows(prev => prev.map(r => {
+            const it = r.id && byId[r.id];
+            if (!it) return r;
+            return {
+              ...r, status: it.status, error: it.error || null,
+              warning: it.warning || null, saved_as: it.saved_as || null,
+              startedAt: r.startedAt || (it.status === "downloading" ? Date.now() : undefined),
+            };
+          }));
+        } catch (e) { /* silent */ }
+      };
+      const id = setInterval(poll, 2000);
+      return () => { stop = true; clearInterval(id); };
+    }, [progressRows.map(r => r.status).join(",")]);
+
+    // Per-file pause / resume / cancel. Optimistic UI; the poll reconciles.
+    const control = React.useCallback(async (row, op) => {
+      if (!row.id) return;
+      const optimistic = op === "pause" ? "paused" : op === "resume" ? "pending" : "cancelled";
+      setProgressRows(prev => prev.map(r => r.id === row.id ? { ...r, status: optimistic } : r));
+      try { await MegaApiClient.queueControl(row.id, op); }
+      catch (e) { console.error("[mega-import] queueControl failed", e); }
+    }, []);
     // Pre-import preview modal state.
     // null = no modal; otherwise { loading, manifest, excluded: Set<path>, excludeExts: Set<ext> }
     const [previewState, setPreviewState] = React.useState(null);
@@ -1487,10 +1541,11 @@
 
       setIsLoading(true);
       setErrorMsg(null);
-      setProgress({ completed: 0, total: items.length, current: null });
-      // Seed the per-file row list — every selected file starts as 'pending'.
-      // Carry size through so we can render a per-file progress bar + xx/yy MB.
-      setProgressRows(items.map(it => ({ path: it.path, status: "pending", size: it.size })));
+      setProgress({ completed: 0, total: 0, current: null });
+      // Rows are driven by the backend queue items (populated on the first poll);
+      // each carries its queue id + handle so we can pause/resume/cancel it and
+      // match its on-disk partial for real-byte progress.
+      setProgressRows([]);
       const controller = new AbortController();
       abortRef.current = controller;
       try {
@@ -1499,27 +1554,20 @@
           (settings.dest || "").trim() || null,
           (p) => {
             setProgress(p);
-            // Update the row for whichever file changed state.
+            if (!p || !p.items) return;
             setProgressRows(prev => {
-              if (!p) return prev;
-              const next = prev.slice();
-              if (p.current) {
-                const idx = next.findIndex(r => r.path === p.current && r.status === "pending");
-                if (idx >= 0) next[idx] = { ...next[idx], status: "downloading", startedAt: Date.now() };
-              }
-              if (p.lastResult) {
-                const idx = next.findIndex(r => r.path === p.lastResult.path);
-                if (idx >= 0) {
-                  next[idx] = {
-                    ...next[idx],
-                    path: p.lastResult.path,
-                    status: p.lastResult.status === "ok" ? "ok" : "err",
-                    error: p.lastResult.error || null,
-                    warning: p.lastResult.warning || null,
-                  };
-                }
-              }
-              return next;
+              const prevById = {};
+              prev.forEach(r => { if (r.id) prevById[r.id] = r; });
+              return p.items.map(it => {
+                const old = prevById[it.id] || {};
+                return {
+                  id: it.id, path: it.path, handle: it.handle, size: it.size,
+                  status: it.status, error: it.error || null,
+                  warning: it.warning || null, saved_as: it.saved_as || null,
+                  startedAt: old.startedAt || (it.status === "downloading" ? Date.now() : undefined),
+                  realBytes: old.realBytes,
+                };
+              });
             });
           },
           controller.signal,
@@ -1867,13 +1915,13 @@
           { className: "mega-progress-rows" },
           [...progressRows]
             .sort((a, b) => {
-              const order = { downloading: 0, pending: 1, ok: 2, err: 3 };
+              const order = { downloading: 0, pending: 1, paused: 2, error: 3, cancelled: 4, ok: 5 };
               return (order[a.status] ?? 9) - (order[b.status] ?? 9);
             })
             .map((row, i) => {
               const icon = row.status === "downloading" ? faSpinner
                 : row.status === "ok" ? faCheck
-                : row.status === "err" ? faTimes
+                : row.status === "error" ? faTimes
                 : faFile;
 
               // Progress: prefer REAL bytes from the temp file on disk
@@ -1923,9 +1971,20 @@
                 React.createElement("span", { className: "mega-progress-row-size" }, sizeText),
                 React.createElement("span", { className: "mega-progress-row-status" },
                   row.status === "ok" && (row.warning ? "✓ (mac-skipped)" : "✓"),
-                  row.status === "err" && ("✗ " + (row.error || "failed")),
+                  row.status === "error" && ("✗ " + (row.error || "failed")),
                   row.status === "downloading" && "downloading…",
-                  row.status === "pending" && "queued"
+                  row.status === "pending" && "queued",
+                  row.status === "paused" && "paused",
+                  row.status === "cancelled" && "cancelled"
+                ),
+                // Per-file controls: pause / resume / cancel (needs queue id).
+                row.id && React.createElement("span", { className: "mega-progress-row-ctl" },
+                  (row.status === "downloading" || row.status === "pending") &&
+                    React.createElement("button", { className: "mega-ctl-btn", title: "Pause", onClick: () => control(row, "pause") }, "⏸"),
+                  (row.status === "paused" || row.status === "error" || row.status === "cancelled") &&
+                    React.createElement("button", { className: "mega-ctl-btn", title: "Resume", onClick: () => control(row, "resume") }, "▶"),
+                  (row.status !== "ok" && row.status !== "cancelled") &&
+                    React.createElement("button", { className: "mega-ctl-btn mega-ctl-cancel", title: "Cancel", onClick: () => control(row, "cancel") }, "✕")
                 )
               );
             })

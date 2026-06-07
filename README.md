@@ -9,6 +9,7 @@ Browse your MEGA.nz cloud storage from inside Stash, pick files or whole folders
 - **Tile-grid file explorer** with breadcrumbs, dark theme, double-click to navigate, single-click to select
 - **SQLite tree index** — the account tree is ingested once, then every folder click is an indexed query (~ms). Scales to **hundreds of thousands of files** (measured ~85 ms/click on a 724k-node account vs seconds before)
 - **Background download queue** — imports run in a **detached worker that survives closing the browser tab**; on completion it auto-adds the destination to the library and triggers a scan, with no UI open
+- **Per-file Pause / Resume / Cancel** — each file in the queue has its own controls; pause keeps the partial and resume continues from the exact byte (no data lost), cancel discards it
 - **Anti-NFS-saturation** — on a network-filesystem dest, files download to local staging and are published serialized + fsync-paced so a big import can't drive the host into an iowait freeze
 - **Stall-based download timeout** — never times out while bytes are flowing; aborts only after a stretch of zero new data (tunnel dropped / throttled to zero)
 - **Resumable downloads** — a custom AES-CTR downloader keeps a partial blob per file, so an interrupted transfer **continues from where it stopped** (HTTP Range) instead of restarting; complete files are skipped on re-run; transient failures retry with backoff

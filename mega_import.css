@@ -694,7 +694,34 @@
 .mega-progress-row-ok .mega-progress-row-status         { color: #28a745; }
 .mega-progress-row-err svg             { color: #dc3545; }
 .mega-progress-row-err .mega-progress-row-status        { color: #f8b6bb; }
+.mega-progress-row-error svg           { color: #dc3545; }
+.mega-progress-row-error .mega-progress-row-status      { color: #f8b6bb; }
 .mega-progress-row-pending svg         { color: #6c757d; }
+.mega-progress-row-paused svg          { color: #f0ad4e; }
+.mega-progress-row-paused .mega-progress-row-status     { color: #f0ad4e; }
+.mega-progress-row-cancelled svg       { color: #6c757d; }
+.mega-progress-row-cancelled .mega-progress-row-status  { color: #6c757d; }
+.mega-progress-row-cancelled .mega-progress-row-path    { text-decoration: line-through; opacity: 0.6; }
+
+/* Per-file pause / resume / cancel buttons */
+.mega-progress-row-ctl {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+  flex: 0 0 auto;
+}
+.mega-ctl-btn {
+  background: #2b3742;
+  color: #cdd6dd;
+  border: 1px solid #3a4854;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+.mega-ctl-btn:hover     { background: #3a4854; color: #fff; }
+.mega-ctl-cancel:hover  { background: #dc3545; border-color: #dc3545; color: #fff; }
 
 /* ---------- Folder import preview modal ---------- */
 .mega-preview-summary { font-size: 14px; }

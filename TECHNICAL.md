@@ -60,6 +60,7 @@ Stash returns `output` directly to the JS caller; `error` is converted to a Grap
 | `enqueue` `{paths, dest?}` | Expand paths to files, append to the background queue, ensure the detached worker is running. Returns `{queued, ids, errors, worker_pid}` immediately |
 | `queue_status` | `{items[], counts, worker_alive, updated_at}` — polled by the UI |
 | `queue_clear` `{only_done?}` | Drop queued items (keeps the in-flight one; `only_done` keeps pending+downloading) |
+| `queue_control` `{id, op}` | Per-file `pause` / `resume` / `cancel`. Pause keeps the partial (resumable); cancel discards it. Worker polls the item's flag between chunks |
 | `temp_progress` | Snapshot of `megapy_*` temp files for real-byte progress UI |
 | `cleanup_temp` | Delete all `megapy_*` temps + staging orphans (manual cleanup button) |
 | `__worker` (internal) | Entry point for the detached background worker — not called by the UI |
@@ -108,6 +109,8 @@ Flow:
 4. **On drain** the worker calls `_post_import()` — it reads the current library paths, adds any missing destinations, and triggers `metadataScan`, all via Stash's GraphQL using the `server_connection` (scheme/port/session cookie) captured in `main()`. So imports land in the library with no UI open.
 
 The UI (`downloadFiles`) just `enqueue`s, then polls `queue_status` to drive the progress bar; it filters by the returned `ids` so it only tracks its own batch. Metadata enrichment (auto-tag / identify / generate) still runs browser-side when open. Worker concurrency is sequential (NFS-safe). The detached-worker primitives (`DETACHED_PROCESS`, `start_new_session`, `/proc`-free liveness) are all guarded so the module imports on any platform.
+
+**Per-file control.** `queue_control {id, op}` sets a `pause`/`cancel` flag on a queue item; the worker passes a `stop_check` into `_download_one`/`_resumable_download` that reads that flag between chunks (~every 1.5 s) and raises `_DownloadPaused`/`_DownloadCancelled`. Pause flushes and keeps the partial (so resume continues from it); cancel deletes the partial. A `pending` item is paused/cancelled directly; `resume` re-queues it (`pending`) and respawns the worker. The UI renders the live queue items (with `handle`), and `temp_progress` reports each partial's `handle` so a row's byte progress maps to its exact partial.
 
 ## Anti-NFS-saturation (local staging + serialized publish)
 
