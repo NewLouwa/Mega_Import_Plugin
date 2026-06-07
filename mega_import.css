@@ -1,3 +1,20 @@
+/* Emoji-capable font fallback so file/folder names and paths containing emoji
+   (e.g. "🔞 SiteRip") render as real glyphs instead of tofu boxes.  Uses the
+   well-known system emoji fonts — Segoe UI Emoji (Windows), Apple Color Emoji
+   (macOS/iOS), Noto Color Emoji (Linux/Android) — so nothing is downloaded and
+   it works offline.  Scoped to the plugin's own elements (no effect on the
+   rest of Stash). */
+:root {
+  --mega-emoji: "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji",
+                "Twemoji Mozilla", "EmojiOne Color", "Android Emoji";
+}
+
+.mega-import-container,
+.mega-browser-page {
+  font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif,
+               var(--mega-emoji);
+}
+
 .mega-import-container {
   padding: 20px;
   max-width: 800px;
@@ -346,7 +363,7 @@
   font-size: 10px;
   color: #6c757d;
   margin-top: 4px;
-  font-family: monospace;
+  font-family: monospace, var(--mega-emoji);
   word-break: break-all;
   width: 100%;
 }
@@ -557,7 +574,7 @@
 }
 
 .mega-history-path {
-  font-family: monospace;
+  font-family: monospace, var(--mega-emoji);
   word-break: break-all;
 }
 
@@ -587,7 +604,7 @@
 
 .mega-progress-current {
   color: #6c757d;
-  font-family: monospace;
+  font-family: monospace, var(--mega-emoji);
   word-break: break-all;
 }
 
@@ -655,7 +672,7 @@
 .mega-progress-row svg { font-size: 13px; }
 
 .mega-progress-row-path {
-  font-family: monospace;
+  font-family: monospace, var(--mega-emoji);
   color: #c4ccd3;
   white-space: nowrap;
   overflow: hidden;
@@ -728,7 +745,7 @@
 }
 
 .mega-preview-ext-pill input { margin: 0; }
-.mega-preview-ext-pill .ext-name { font-weight: 600; font-family: monospace; }
+.mega-preview-ext-pill .ext-name { font-weight: 600; font-family: monospace, var(--mega-emoji); }
 .mega-preview-ext-pill .ext-count { font-variant-numeric: tabular-nums; }
 .mega-preview-ext-pill .ext-bytes { color: #94a3ad; font-size: 11px; }
 
@@ -755,7 +772,7 @@
 .mega-preview-file-row.excluded { opacity: 0.5; text-decoration: line-through; }
 
 .preview-file-path {
-  font-family: monospace;
+  font-family: monospace, var(--mega-emoji);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -826,7 +843,7 @@
 .mega-results-row.err .mega-results-status  { color: #dc3545; }
 
 .mega-results-name {
-  font-family: monospace;
+  font-family: monospace, var(--mega-emoji);
   word-break: break-all;
   color: #e8eaed;
 }

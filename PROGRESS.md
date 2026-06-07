@@ -15,6 +15,8 @@ Local SQLite tree index — large-account browsing goes from seconds-per-click t
 
 ### Fixed
 - **Disconnect button** could appear dead: `logout()` now clears local state immediately and runs the server-side cleanup in the background, and the browser page no longer re-pops the login modal the instant you disconnect.
+- **Non-ASCII paths** (emoji/accented folder names, e.g. `🔞 SiteRip`) returned "Path not found": stdin is now read as UTF-8 instead of the Windows locale codec (cp1252), which had mangled the path before the DB lookup.
+- **Emoji rendered as tofu boxes**: the plugin now uses an emoji-capable font stack (Segoe UI Emoji / Apple Color Emoji / Noto Color Emoji), including a fallback appended to the `monospace` path/pill text. System fonts only — no download, offline-safe, scoped to the plugin.
 
 ## v1.1.0 — Unreleased
 
