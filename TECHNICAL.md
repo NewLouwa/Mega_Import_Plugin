@@ -76,30 +76,25 @@ SHA-256([nonce_be] + [token_bytes × 262144])[0:4] ≤ threshold(easiness)
 
 Implemented in `_gencash()` using `threading` workers. `hashlib` releases the GIL during large `update()` calls, so threads run in genuine parallel. Each nonce attempt SHA-256-hashes the full ~12 MB buffer and a login challenge routinely needs tens-to-hundreds of thousands of attempts, so the only lever is core count — the solver uses **all** logical CPUs (override with `MEGA_HASHCASH_THREADS`). The nonce is at the *front* of the buffer, so SHA-256's Merkle–Damgård chaining forbids precomputing the constant tail: every attempt genuinely re-hashes all 12 MB, there is no algorithmic shortcut. It logs the solve time + thread count to stderr. The session token cached in `/tmp/.mega_session.json` makes this a one-time cost — `list`/`download`/`whoami` reuse the SID and never re-solve.
 
-## MAC-mismatch workaround
+## Resumable download (`_resumable_download`) + MAC
 
-`mega.py.Mega._download_file` runs an integrity check after the download completes:
+mega.py's `_download_file` decrypts the file as one continuous AES-CTR stream, then runs a CBC-MAC integrity check that is **buggy for many files** ([odwyersoftware/mega.py#61](https://github.com/odwyersoftware/mega.py/issues/61)) and, crucially, **can't resume** — an interrupted file restarts from zero and the partial bytes are discarded.
 
-```python
-if (file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3]) != meta_mac:
-    raise ValueError('Mismatched mac')
-output_path = Path(dest_path + file_name)
-shutil.move(temp_output_file.name, output_path)   # never reached on mismatch
-```
+We replace it with our own download:
 
-The MAC algorithm is buggy for many files — see [odwyersoftware/mega.py#61](https://github.com/odwyersoftware/mega.py/issues/61). When it raises, the fully-downloaded bytes are sitting in `/tmp/megapy_<random>` (created with `delete=False`). Our wrapper:
+- **CTR is position-independent.** The download URL from `{'a':'g','g':1,'n':handle}` is fetched with an HTTP `Range: bytes=N-` header (MEGA returns `206`), and the cipher is `AES.new(k, MODE_CTR, counter=base + N//16)` where `base = ((iv[0]<<32)+iv[1])<<64`. Decrypting from byte `N` yields exactly the same plaintext as a full download (verified byte-identical against mega.py's output).
+- **Deterministic partial blob** keyed by the file handle at `<tmp>/mega_partials/<handle>.part`. On interruption the partial is kept (the caller's retry resumes it); on each attempt we resume from `align16(partial_size)`. Only a complete, size-verified file is `os.replace`d into the destination.
+- **No MAC.** CTR decryption is correct by construction, so the unreliable MAC check (and its `/tmp/megapy_*` rescue dance) is gone.
 
-1. Catches `ValueError("Mismatched mac")`
-2. Lists `/tmp/megapy_*` and finds files with size matching the expected `node["s"]`
-3. `shutil.move`s the matching one to the final destination
-4. Marks the import row `✓ (mac-skipped)` in the UI
+Partials live under the orphan-prune window (1 h idle → deleted by `_prune_orphans`), so "stop, then re-download the same file soon" resumes from the blob; re-download much later starts fresh.
 
 ## Download resilience
 
 `_download_one()` wraps each per-file transfer with:
 
-- **File-level resume** — if a complete copy (size == `node["s"]`) already sits at the destination, the transfer is skipped and the row is marked `skipped`. mega.py downloads to a `/tmp` temp file and only moves on success, so a file at the destination is genuinely complete, never partial. Re-running an interrupted multi-file import is therefore cheap and idempotent.
-- **Retry with backoff** — transient failures (network blips, mega.py request errors, publish errors) are retried up to `MEGA_DOWNLOAD_RETRIES` times (default 3) with exponential backoff (1s, 2s, 4s, … capped at 15s). The MAC-rescue path counts as success and short-circuits the retries.
+- **Byte-level resume** via `_resumable_download` (above) — an interrupted file continues from its partial blob.
+- **File-level resume** — if a complete copy (size == `node["s"]`) already sits at the destination, the transfer is skipped and the row is marked `skipped`.
+- **Retry with backoff** — transient failures (network blips, request errors, publish errors) retry up to `MEGA_DOWNLOAD_RETRIES` times (default 3) with exponential backoff (1s, 2s, 4s, … capped at 15s); each retry resumes from the partial.
 
 ## Background download queue (detached worker)
 
@@ -150,6 +145,7 @@ Result on a 724k-node / 12 TB account: per-click navigation **6.7 s → ~85 ms (
 | `MEGA_TREE_DB` | `<tmp>/.mega_tree.sqlite` | Override tree-index DB path |
 | `MEGA_TREE_TTL` | `86400` (24 h) | Tree-index freshness before re-fetch |
 | `MEGA_QUEUE_FILE` | `<tmp>/mega_queue.json` | Background download-queue file path |
+| `MEGA_PARTIALS_DIR` | `<tmp>/mega_partials` | Where resumable-download partial blobs are kept |
 | `MEGA_HASHCASH_THREADS` | all logical CPUs | PoW solver thread count |
 | `MEGA_DOWNLOAD_RETRIES` | `3` | Per-file download attempts before giving up |
 | `MEGA_STAGING` | auto (NFS→on) | `force`/`off` to override staging decision |

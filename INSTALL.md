@@ -137,7 +137,7 @@ Clear them via Settings panel buttons or `Disconnect`.
 | `list` / `find` / `preview` | 15 min (covers the one-time tree fetch + index ingest) |
 | `download` | **no wall-clock timeout** — a stall guard aborts only after ~3 min of zero new bytes (see below) |
 
-Downloads now run in the **background queue** (`enqueue`), and the UI polls `queue_status`. The download itself uses a *stall guard*, not a fixed timeout: it keeps running as long as the temp file is growing and aborts only after a stretch of no new data (tunnel dropped / MEGA throttled to zero). The detached worker survives a closed tab; file-level resume skips already-complete files on re-run.
+Downloads now run in the **background queue** (`enqueue`), and the UI polls `queue_status`. The download itself uses a *stall guard*, not a fixed timeout: it keeps running as long as the temp file is growing and aborts only after a stretch of no new data (tunnel dropped / MEGA throttled to zero). The detached worker survives a closed tab; an interrupted file resumes from its partial blob (byte-level), and already-complete files are skipped on re-run.
 
 ### Concurrency
 
@@ -174,7 +174,7 @@ python -m unittest test_mega_import
 
 ## Roadmap (post-v1)
 
-Shipped since v1.0.0 (see [PROGRESS.md](PROGRESS.md)): ✅ **background download queue** (detached worker survives a closed tab), ✅ **file-level resume**, ✅ **SQLite-indexed browsing**, ✅ **anti-NFS-saturation staging**, ✅ **stall-based download timeout**, ✅ **bandwidth cap** (`MEGA_PUBLISH_BWLIMIT`).
+Shipped since v1.0.0 (see [PROGRESS.md](PROGRESS.md)): ✅ **background download queue** (detached worker survives a closed tab), ✅ **byte-level resumable downloads** (custom AES-CTR + HTTP Range), ✅ **SQLite-indexed browsing**, ✅ **anti-NFS-saturation staging**, ✅ **stall-based download timeout**, ✅ **bandwidth cap** (`MEGA_PUBLISH_BWLIMIT`).
 
 Still deferred:
 

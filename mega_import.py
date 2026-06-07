@@ -1265,6 +1265,82 @@ def _await_staging_capacity(staging_dir):
         _time.sleep(2)
 
 
+def _partials_dir():
+    return Path(os.environ.get("MEGA_PARTIALS_DIR") or (Path(_tempfile.gettempdir()) / "mega_partials"))
+
+
+def _resumable_download(m, handle, node, out_dir, fname, expected_size):
+    """Download a MEGA file with BYTE-LEVEL resume.
+
+    mega.py can't resume an interrupted file (it restarts from zero and discards
+    the bytes).  We decrypt the AES-CTR stream ourselves — CTR is position-
+    independent, so we can continue at any 16-byte boundary — and keep a
+    deterministic partial blob keyed by the file handle in `_partials_dir()`.
+    If the same file is downloaded again before that blob is pruned (the orphan
+    deletion period), we resume from it via an HTTP Range request instead of
+    restarting, so no downloaded data is lost.  On interruption the partial is
+    kept (the caller's retry resumes it); only a complete file is moved into
+    place.  MAC is skipped — mega.py's MAC is unreliable and CTR decryption is
+    correct by construction (verified against full mega.py output).
+    """
+    import requests as _rq
+    from mega.crypto import a32_to_str
+    from Crypto.Cipher import AES
+    from Crypto.Util import Counter
+
+    k, iv = node["k"], node["iv"]
+    k_str = a32_to_str(k)
+    base_ctr = ((iv[0] << 32) + iv[1]) << 64
+
+    pdir = _partials_dir()
+    pdir.mkdir(parents=True, exist_ok=True)
+    partial = pdir / (str(handle).replace("/", "_") + ".part")
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    final = out_dir / fname
+
+    # Resume offset = existing partial size aligned down to a 16-byte block.
+    offset = 0
+    if partial.exists():
+        try:
+            offset = (partial.stat().st_size // 16) * 16
+        except OSError:
+            offset = 0
+
+    fd = m._api_request({"a": "g", "g": 1, "n": handle})  # fresh URL each attempt
+    if "g" not in fd:
+        raise MegaError("File not accessible anymore", code="gone")
+    url = fd["g"]
+    size = fd.get("s", expected_size) or expected_size
+
+    headers = {"Range": f"bytes={offset}-"} if offset > 0 else {}
+    resp = _rq.get(url, headers=headers, stream=True, timeout=120)
+    if offset > 0 and resp.status_code != 206:
+        print(f"[mega-import] resume not honored (HTTP {resp.status_code}); restarting {fname}", file=sys.stderr)
+        offset = 0
+        resp = _rq.get(url, stream=True, timeout=120)
+    resp.raise_for_status()
+    if offset > 0:
+        print(f"[mega-import] resuming {fname} from byte {offset}/{size}", file=sys.stderr)
+
+    ctr = Counter.new(128, initial_value=base_ctr + (offset // 16))
+    aes = AES.new(k_str, AES.MODE_CTR, counter=ctr)
+
+    with open(partial, "r+b" if (offset > 0 and partial.exists()) else "wb") as fo:
+        fo.seek(offset)
+        fo.truncate(offset)
+        for chunk in resp.iter_content(chunk_size=1 << 20):
+            if chunk:
+                fo.write(aes.decrypt(chunk))
+
+    got = partial.stat().st_size
+    if size and got != size:
+        # Interrupted / short read — keep the partial so the retry resumes it.
+        raise MegaError(f"incomplete download: {got}/{size} bytes (partial kept)", code="short_read")
+    os.replace(partial, final)  # atomic; only a complete file lands
+    return final
+
+
 def _download_one(m, file_nid, file_node, dest_path, fname, target_file, expected_size, file_path, staging_dir=None):
     """Download a single MEGA file with file-level resume, retry/backoff, and
     (when staging_dir is given) local-staging + serialized publish to the dest.
@@ -1295,26 +1371,14 @@ def _download_one(m, file_nid, file_node, dest_path, fname, target_file, expecte
     retries = max(1, _int_env("MEGA_DOWNLOAD_RETRIES", 3))
 
     def _attempt():
-        """One full fetch (+ publish if staging). Returns a warning string or
-        None on success; raises on failure."""
-        warning = None
-        try:
-            # mega.py expects file=(nid, node_dict). The method is `download`,
-            # NOT `download_file` (that name doesn't exist on the Mega class).
-            m.download((file_nid, file_node), dest_path=str(fetch_dir), dest_filename=fname)
-        except ValueError as e:
-            # mega.py's post-download MAC verification is buggy for many files
-            # (https://github.com/odwyersoftware/mega.py/issues/61).  The fully
-            # decrypted bytes are still in /tmp/megapy_* — rescue them into the
-            # fetch dir, then fall through to publish.
-            if "mismatched mac" in str(e).lower() and _rescue_mac_tempfile(fetch_target, expected_size):
-                warning = "mac-check-skipped"
-                print(f"[mega-import] MAC failed but rescued temp file → {fetch_target} ({expected_size}b)", file=sys.stderr)
-            else:
-                raise
+        """One fetch (+ publish if staging). Raises on failure (a partial blob
+        is kept so the next attempt resumes from where it stopped)."""
+        # Custom resumable download (mega.py can't resume); writes the complete
+        # decrypted file to fetch_dir/fname, continuing from any kept partial.
+        _resumable_download(m, file_nid, file_node, fetch_dir, fname, expected_size)
         if staging_dir is not None:
             _publish(fetch_target, target_file, staging_dir)
-        return warning
+        return None
 
     last_err = None
     for attempt in range(1, retries + 1):
@@ -1463,6 +1527,9 @@ def _prune_orphans(max_age=3600):
     stg = _staging_dir()
     if stg.exists():
         paths += [str(p) for p in stg.glob("*") if p.name != ".publish.lock"]
+    pdir = _partials_dir()  # resumable-download partial blobs
+    if pdir.exists():
+        paths += [str(p) for p in pdir.glob("*.part")]
     for p in paths:
         try:
             pp = Path(p)

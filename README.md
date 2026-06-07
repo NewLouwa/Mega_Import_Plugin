@@ -11,7 +11,7 @@ Browse your MEGA.nz cloud storage from inside Stash, pick files or whole folders
 - **Background download queue** — imports run in a **detached worker that survives closing the browser tab**; on completion it auto-adds the destination to the library and triggers a scan, with no UI open
 - **Anti-NFS-saturation** — on a network-filesystem dest, files download to local staging and are published serialized + fsync-paced so a big import can't drive the host into an iowait freeze
 - **Stall-based download timeout** — never times out while bytes are flowing; aborts only after a stretch of zero new data (tunnel dropped / throttled to zero)
-- **File-level resume** — re-running an interrupted import skips already-complete files; transient failures retry with backoff
+- **Resumable downloads** — a custom AES-CTR downloader keeps a partial blob per file, so an interrupted transfer **continues from where it stopped** (HTTP Range) instead of restarting; complete files are skipped on re-run; transient failures retry with backoff
 - **Folder import preview** — file count, total size, breakdown by extension; uncheck individual files or extensions before downloading
 - **Auto-recovery** from `mega.py`'s broken MAC integrity check (rescues the fully-downloaded temp file)
 - **UTF-8 / emoji safe** — non-ASCII paths resolve correctly; an emoji-capable font stack renders names; filenames slugified safely for any filesystem
@@ -78,7 +78,7 @@ Tracked in [INSTALL.md § Roadmap](INSTALL.md#roadmap-post-v1). Highlights of wh
 - Multiple MEGA accounts
 - **Pure-JS rewrite** (drop the Python backend entirely, use a browser MEGA library)
 
-Shipped since v1.0.0: ✅ background download queue (survives the tab), ✅ resumable downloads (file-level), ✅ SQLite-indexed browsing.
+Shipped since v1.0.0: ✅ background download queue (survives the tab), ✅ **byte-level resumable downloads**, ✅ SQLite-indexed browsing.
 
 ## Development
 
