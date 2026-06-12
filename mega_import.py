@@ -59,6 +59,18 @@ import random
 import sys
 from pathlib import Path
 
+# Vendored dependencies.  Where mega.py / pycryptodome / requests can't be
+# pip-installed system-wide (e.g. the Alpine Stash container), they're bundled
+# in a `_vendor/` dir next to this file.  Put it on sys.path BEFORE any
+# third-party import below, so the same code runs whether deps are vendored or
+# system-installed.  No-op when `_vendor/` is absent (system deps).
+try:
+    _VENDOR = Path(__file__).resolve().parent / "_vendor"
+    if _VENDOR.is_dir() and str(_VENDOR) not in sys.path:
+        sys.path.insert(0, str(_VENDOR))
+except Exception:
+    pass
+
 # Stash captures the plugin subprocess's stderr through a pipe, which makes
 # Python block-buffer it — so progress lines (e.g. the multi-minute "Solving
 # hashcash…") only surface when the process exits, making a slow login look
