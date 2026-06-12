@@ -561,6 +561,10 @@
       return this._runTask("queue_status", {});
     },
 
+    async queueClear(onlyDone) {
+      return this._runTask("queue_clear", onlyDone ? { only_done: true } : {});
+    },
+
     async cleanupTemp() {
       return this._runTask("cleanup_temp", {});
     },
@@ -1391,6 +1395,48 @@
     const importedSet = useImportedSet();
     const toast = api.hooks.useToast();
 
+    // Re-attach to the background queue when the page (re)opens. Downloads run
+    // in a detached server-side worker that survives a closed tab, so on reopen
+    // we surface any still-active items in the progress panel and fold the
+    // completed ones into History (which the closed tab never recorded). Runs
+    // once on mount; the live-poll effect then keeps active rows updating.
+    React.useEffect(() => {
+      let stop = false;
+      (async () => {
+        try {
+          const st = await MegaApiClient.queueStatus();
+          if (stop || !st || !st.items || !st.items.length) return;
+          const items = st.items;
+          // Fold finished items into History (dedup by path+status so reopening
+          // doesn't pile up duplicates of the same import).
+          const known = new Set((HistoryStore.read().entries || []).map(e => e.path + "|" + e.status));
+          const fresh = items.filter(it =>
+            (it.status === "ok" || it.status === "error") && !known.has(it.path + "|" + it.status));
+          if (fresh.length) {
+            HistoryStore.record(fresh.map(it => ({
+              path: it.path, dest: it.dest, status: it.status,
+              ts: it.finished_at ? Math.round(it.finished_at * 1000) : Date.now(),
+              error: it.error || null,
+            })));
+          }
+          // Surface active items (still running / paused) so the user sees the
+          // in-progress import and can pause/resume/cancel it.
+          const active = items.filter(it => ["pending", "downloading", "paused"].includes(it.status));
+          if (active.length) {
+            setProgressRows(items.map(it => ({
+              id: it.id, path: it.path, handle: it.handle, size: it.size,
+              status: it.status, error: it.error || null, warning: it.warning || null,
+              saved_as: it.saved_as || null,
+              startedAt: it.status === "downloading" ? Date.now() : undefined,
+            })));
+            const settled = items.filter(it => !["pending", "downloading"].includes(it.status)).length;
+            setProgress({ completed: settled, total: items.length, current: null });
+          }
+        } catch (e) { /* silent — no queue / not logged in */ }
+      })();
+      return () => { stop = true; };
+    }, []);
+
     // While searching, the results replace the file listing. currentPath is
     // preserved so "clear search" returns the user to where they were.
     const displayFiles = searchResults !== null ? searchResults : files;
@@ -1763,11 +1809,18 @@
       runImport(finalItems, postActions);
     };
 
-    const cancelImport = () => {
+    const cancelImport = async () => {
       if (abortRef.current) {
         abortRef.current.abort();
         toast.success("Cancelling after current file…");
+        return;
       }
+      // Reopened session (no local loop): cancel pending via the queue. The
+      // file currently downloading keeps going; use its row's ✕ to stop it.
+      try {
+        await MegaApiClient.queueClear(false);
+        toast.success("Cancelled pending downloads");
+      } catch (e) { /* ignore */ }
     };
 
     const selectAllVisible = () => {

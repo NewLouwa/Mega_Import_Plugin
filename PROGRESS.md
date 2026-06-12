@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.2 — 2026-06-12
+
+### Fixed
+- **Re-attach to background imports on reopen.** Downloads run in a detached server-side worker that survives a closed tab, but the browser-side progress panel and History didn't reflect that on the next visit. On page load the plugin now pulls `queue_status` and: (a) shows any still-active items (pending/downloading/paused) in the progress panel — with their pause/resume/cancel controls — and (b) folds completed items into History (deduped), which a closed tab never recorded. The top "Cancel" button now also works on a reopened session (clears pending via the queue).
+
 ## v1.5.1 — 2026-06-07
 
 ### Added
