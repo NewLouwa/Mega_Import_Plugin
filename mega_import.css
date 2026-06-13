@@ -189,7 +189,20 @@
 
 .mega-browser-actions {
   display: flex;
+  justify-content: space-between;   /* utilities left, primary import action right */
+  align-items: center;
   gap: 10px;
+  flex-wrap: wrap;
+}
+.mega-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* The Import action sits apart from the utility buttons so it reads as the
+   primary call-to-action; Cancel (when shown) pairs with it. */
+.mega-actions-primary .btn-primary {
+  font-weight: 600;
 }
 
 .mega-browser-content {

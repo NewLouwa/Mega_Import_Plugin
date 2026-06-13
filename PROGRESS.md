@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.5.3 — 2026-06-12
+
+### Changed
+- **Action bar redesign.** The "Import Selected" button no longer *turns into* a Cancel button while an import runs — it stays visible at all times. The header is now split into two logical groups: utilities on the left (Back, History, Settings, Disconnect) and the primary **Import Selected** action on the right, with a separate red **Cancel** button appearing next to it only while an import is in flight. Import is disabled (greyed) while an import is running or nothing is selected. Cancel now stops *all* active files in the queue (works whether the import was started in this tab or reattached from a previous visit).
+
 ## v1.5.2 — 2026-06-12
 
 ### Fixed

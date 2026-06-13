@@ -1810,18 +1810,22 @@
     };
 
     const cancelImport = async () => {
-      if (abortRef.current) {
-        abortRef.current.abort();
-        toast.success("Cancelling after current file…");
-        return;
-      }
-      // Reopened session (no local loop): cancel pending via the queue. The
-      // file currently downloading keeps going; use its row's ✕ to stop it.
-      try {
-        await MegaApiClient.queueClear(false);
-        toast.success("Cancelled pending downloads");
-      } catch (e) { /* ignore */ }
+      // Stop the local wait-loop (if this tab started the import) so it stops
+      // re-rendering, then cancel every still-active queue item — works the same
+      // whether the import was started here or reattached from a previous visit.
+      if (abortRef.current) abortRef.current.abort();
+      const active = progressRows.filter(r => r.id && ["pending", "downloading", "paused"].includes(r.status));
+      if (!active.length) return;
+      setProgressRows(prev => prev.map(r =>
+        active.some(a => a.id === r.id) ? { ...r, status: "cancelled" } : r));
+      toast.success("Cancelling…");
+      await Promise.all(active.map(r => MegaApiClient.queueControl(r.id, "cancel").catch(() => {})));
     };
+
+    // True while any import is in flight (started here or reattached from a
+    // previous visit). Drives the Cancel button + keeps a new Import from
+    // clobbering the in-progress one.
+    const hasActiveImport = progressRows.some(r => ["pending", "downloading", "paused"].includes(r.status));
 
     const selectAllVisible = () => {
       setSelectedItems(prev => Array.from(new Set([...prev, ...visibleSelectablePaths])));
@@ -1919,40 +1923,54 @@
         React.createElement(
           "div",
           { className: "mega-browser-actions" },
+          // Left group: navigation + utilities (back, history, settings, disconnect).
           React.createElement(
-            Button,
-            { variant: "secondary", onClick: () => navigateTo("/"), className: "mr-2" },
-            React.createElement(Icon, { icon: faHome }),
-            " Back to Stash"
+            "div",
+            { className: "mega-actions-group" },
+            React.createElement(
+              Button,
+              { variant: "outline-secondary", size: "sm", onClick: () => navigateTo("/"), title: "Back to Stash" },
+              React.createElement(Icon, { icon: faHome }), " Back"
+            ),
+            React.createElement(
+              Button,
+              { variant: "outline-secondary", size: "sm", onClick: () => setShowHistory(s => !s), title: "Import history" },
+              React.createElement(Icon, { icon: faHistory })
+            ),
+            React.createElement(
+              Button,
+              { variant: "outline-secondary", size: "sm", onClick: () => setShowSettings(s => !s), title: "Settings" },
+              React.createElement(Icon, { icon: faCog })
+            ),
+            React.createElement(
+              Button,
+              { variant: "outline-danger", size: "sm", onClick: handleDisconnect, disabled: isLoading, title: "Disconnect from MEGA" },
+              React.createElement(Icon, { icon: faSignOutAlt }), " Disconnect"
+            )
           ),
-          progress
-            ? React.createElement(
-                Button,
-                { variant: "outline-warning", onClick: cancelImport, className: "mr-2" },
-                React.createElement(Icon, { icon: faTimes }),
-                ` Cancel (${progress.completed}/${progress.total})`
-              )
-            : React.createElement(
-                Button,
-                { variant: "primary", onClick: handleImport, disabled: isLoading || selectedItems.length === 0, className: "mr-2" },
-                React.createElement(Icon, { icon: faCloudDownloadAlt }),
-                ` Import Selected (${selectedItems.length})`
-              ),
+          // Right group: the primary import action. Import stays visible at all
+          // times; Cancel appears alongside it only while an import is running.
           React.createElement(
-            Button,
-            { variant: "outline-secondary", onClick: () => setShowHistory(s => !s), className: "mr-2", title: "Import history" },
-            React.createElement(Icon, { icon: faHistory })
-          ),
-          React.createElement(
-            Button,
-            { variant: "outline-secondary", onClick: () => setShowSettings(s => !s), className: "mr-2", title: "Settings" },
-            React.createElement(Icon, { icon: faCog })
-          ),
-          React.createElement(
-            Button,
-            { variant: "outline-danger", onClick: handleDisconnect, disabled: isLoading },
-            React.createElement(Icon, { icon: faSignOutAlt }),
-            " Disconnect"
+            "div",
+            { className: "mega-actions-group mega-actions-primary" },
+            hasActiveImport && React.createElement(
+              Button,
+              { variant: "danger", onClick: cancelImport, title: "Cancel the running import" },
+              React.createElement(Icon, { icon: faTimes }), " Cancel"
+            ),
+            React.createElement(
+              Button,
+              {
+                variant: "primary",
+                onClick: handleImport,
+                disabled: isLoading || hasActiveImport || selectedItems.length === 0,
+                title: hasActiveImport
+                  ? "An import is already running — wait for it to finish or cancel it"
+                  : (selectedItems.length ? `Import ${selectedItems.length} selected item(s)` : "Select files or folders to import"),
+              },
+              React.createElement(Icon, { icon: faCloudDownloadAlt }),
+              ` Import Selected (${selectedItems.length})`
+            )
           )
         )
       ),
