@@ -1345,12 +1345,19 @@ def _resumable_download(m, handle, node, out_dir, fname, expected_size, stop_che
     url = fd["g"]
     size = fd.get("s", expected_size) or expected_size
 
+    # (connect, read) timeout. The READ budget bounds a *mid-stream* stall: with
+    # a single scalar timeout a half-open CDN socket could block one iter_content
+    # read for the whole 120s with no bytes, no stop_check, no progress — the
+    # "stuck at a %" / "can't cancel" reports. A ~60s read budget makes a stall
+    # raise Timeout fast; _download_one then retries and byte-resume continues
+    # from the kept partial, so nothing is lost.
+    _to = (_int_env("MEGA_CONNECT_TIMEOUT", 15), _int_env("MEGA_READ_TIMEOUT", 60))
     headers = {"Range": f"bytes={offset}-"} if offset > 0 else {}
-    resp = _rq.get(url, headers=headers, stream=True, timeout=120)
+    resp = _rq.get(url, headers=headers, stream=True, timeout=_to)
     if offset > 0 and resp.status_code != 206:
         print(f"[mega-import] resume not honored (HTTP {resp.status_code}); restarting {fname}", file=sys.stderr)
         offset = 0
-        resp = _rq.get(url, stream=True, timeout=120)
+        resp = _rq.get(url, stream=True, timeout=_to)
     resp.raise_for_status()
     if offset > 0:
         print(f"[mega-import] resuming {fname} from byte {offset}/{size}", file=sys.stderr)
@@ -1360,11 +1367,16 @@ def _resumable_download(m, handle, node, out_dir, fname, expected_size, stop_che
 
     import time as _t
     last_check = _t.time()
+    # Smaller chunks → iter_content returns more often → stop_check (pause/cancel)
+    # is honored sooner and the on-disk partial mtime advances smoothly, so the
+    # UI's "active" detection (age_s < 30) doesn't falsely read a slow download
+    # as frozen.
+    chunk_size = _int_env("MEGA_CHUNK_BYTES", 256 * 1024)
     with open(partial, "r+b" if (offset > 0 and partial.exists()) else "wb") as fo:
         fo.seek(offset)
         fo.truncate(offset)
         since = 0
-        for chunk in resp.iter_content(chunk_size=1 << 20):
+        for chunk in resp.iter_content(chunk_size=chunk_size):
             if not chunk:
                 continue
             fo.write(aes.decrypt(chunk))
@@ -1378,8 +1390,8 @@ def _resumable_download(m, handle, node, out_dir, fname, expected_size, stop_che
                 fo.flush()
                 since = 0
             # Cooperative per-file stop (pause/cancel) — checked ~every 1.5s so
-            # it doesn't read the queue on every 1 MB chunk. The partial is
-            # flushed first, so a pause keeps every byte already received.
+            # it doesn't read the queue on every chunk. The partial is flushed
+            # first, so a pause keeps every byte already received.
             if stop_check is not None and (_t.time() - last_check) >= 1.5:
                 last_check = _t.time()
                 sig = stop_check()
@@ -1571,6 +1583,48 @@ def _save_queue(q):
     os.replace(tmp, p)
 
 
+# --- worker liveness -------------------------------------------------------
+def _worker_responsive(q):
+    """True if the queue has a LIVE worker that can honor a cooperative control
+    flag.
+
+    Deliberately just a liveness check — NOT a "has it made progress lately?"
+    heuristic.  A healthy worker can legitimately go minutes without touching
+    the queue (NFS publish, staging backpressure up to MEGA_STAGE_MAX_WAIT, a
+    fresh-URL request + hashcash PoW), so killing/replacing it on a staleness
+    timer would race a second worker onto the same unlocked partial blob →
+    silent data corruption.  A stalled *download* already self-recovers via the
+    read timeout in _resumable_download, after which the worker polls the flag.
+    """
+    pid = q.get("worker_pid")
+    return bool(pid and _pid_alive(pid))
+
+
+def _prune_terminal(q, keep_recent=30, max_age=86400):
+    """Bound the queue file: drop completed items (ok/cancelled) older than
+    max_age, always keeping the newest `keep_recent` of them and ALL errors (so
+    failures stay visible).  Never touches pending/downloading/paused.  Mutates
+    q['items'] in place; returns how many were removed."""
+    items = q.get("items", [])
+    terminal = [it for it in items if it.get("status") in ("ok", "cancelled")]
+    if len(terminal) <= keep_recent:
+        return 0
+
+    def _ts(it):
+        return it.get("finished_at") or it.get("added_at") or 0
+
+    keep = {id(it) for it in sorted(terminal, key=_ts, reverse=True)[:keep_recent]}
+    cutoff = _now() - max_age
+    before = len(items)
+    q["items"] = [
+        it for it in items
+        if it.get("status") not in ("ok", "cancelled")
+        or id(it) in keep
+        or _ts(it) >= cutoff
+    ]
+    return before - len(q["items"])
+
+
 def _prune_orphans(max_age=3600):
     """Delete megapy_* temp files and staging-dir leftovers older than max_age
     (orphans from downloads that died).  An ACTIVE download keeps rewriting its
@@ -1690,11 +1744,17 @@ def action_enqueue(args):
     ids = []
     with _publish_lock(_queue_lock_dir()):
         q = _load_queue()
-        base = len(q["items"])
+        # Monotonic, persisted counter — NOT len(items). A queue_clear shrinks
+        # the list, so len-based ids could collide with a still-referenced row
+        # from an earlier same-second batch and the UI (which merges rows by id)
+        # would update the wrong file.
+        nxt = int(q.get("next_id") or 0)
         stamp = int(_now())
-        for i, it in enumerate(new_items):
-            it["id"] = f"{stamp}-{base + i}"
+        for it in new_items:
+            it["id"] = f"{stamp}-{nxt}"
+            nxt += 1
             ids.append(it["id"])
+        q["next_id"] = nxt
         q["items"].extend(new_items)
         _save_queue(q)
 
@@ -1705,24 +1765,51 @@ def action_enqueue(args):
 def action_queue_status(_args):
     q = _load_queue()
     items = q.get("items", [])
-    worker_alive = bool(q.get("worker_pid") and _pid_alive(q["worker_pid"]))
+    pid = q.get("worker_pid")
+    worker_alive = bool(pid and _pid_alive(pid))
     unfinished = any(it["status"] in ("pending", "downloading") for it in items)
 
-    # Self-heal: if there's work left but no live worker (it was killed by a
-    # restart/reboot/crash), requeue any stale "downloading" and respawn one.
-    # The worker's auth-failure path marks items "error", so this can't loop.
+    # Self-heal: if there's work left but the worker is DEAD (killed by a
+    # restart/reboot/crash), requeue and respawn.  We never kill an *alive*
+    # worker on a staleness guess — a healthy worker can be mid-publish for
+    # minutes and a second worker racing the same partial would corrupt it; a
+    # stalled download self-recovers via the read timeout instead.  When
+    # requeuing a stale "downloading" item we HONOR any outstanding cancel/pause
+    # flag instead of blindly restarting it, so a cancel issued against a dead
+    # worker doesn't silently re-download.  The worker's auth-failure path marks
+    # items "error", so this can't loop.
     if unfinished and not worker_alive:
         print("[mega-import] queue_status: work pending, no live worker — respawning", file=sys.stderr)
         with _publish_lock(_queue_lock_dir()):
             q = _load_queue()
             for it in q["items"]:
-                if it["status"] == "downloading":
+                if it["status"] != "downloading":
+                    continue
+                ctl = it.get("control")
+                if ctl == "cancel":
+                    it["status"] = "cancelled"
+                    it.pop("control", None)
+                    _delete_partial(it.get("handle"))
+                elif ctl == "pause":
+                    it["status"] = "paused"
+                    it.pop("control", None)
+                else:
                     it["status"] = "pending"
+            q["worker_pid"] = None
             _save_queue(q)
         _ensure_worker(_SERVER_CONNECTION)
         q = _load_queue()
         items = q.get("items", [])
         worker_alive = bool(q.get("worker_pid") and _pid_alive(q["worker_pid"]))
+
+    # Opportunistically bound the queue file so reopening doesn't resurface a
+    # pile of finished rows (and the JSON doesn't grow without limit).
+    with _publish_lock(_queue_lock_dir()):
+        q2 = _load_queue()
+        if _prune_terminal(q2):
+            _save_queue(q2)
+            q = q2
+            items = q.get("items", [])
 
     counts = {}
     for it in items:
@@ -1736,13 +1823,33 @@ def action_queue_status(_args):
 
 
 def action_queue_clear(args):
-    """Drop queue items.  By default removes everything except the file
-    currently downloading; pass only_done=true to keep pending+downloading."""
+    """Drop / cancel queue items.
+
+    - only_done=True  : keep the active set (pending+downloading+paused), drop
+                        finished rows.  Used by "clear history".
+    - default (False) : CANCEL EVERYTHING — signal each downloading item to stop
+                        (and force it terminal if the worker isn't responsive),
+                        then drop the rest.  Used by the import abort path so a
+                        wedged "downloading" row can never survive a cancel-all.
+    """
     only_done = bool(args.get("only_done"))
     with _publish_lock(_queue_lock_dir()):
         q = _load_queue()
-        keep = ("pending", "downloading") if only_done else ("downloading",)
-        q["items"] = [it for it in q["items"] if it["status"] in keep]
+        if only_done:
+            q["items"] = [it for it in q["items"]
+                          if it.get("status") in ("pending", "downloading", "paused")]
+        else:
+            responsive = _worker_responsive(q)
+            kept = []
+            for it in q["items"]:
+                if it.get("status") != "downloading":
+                    continue  # pending / paused / terminal → dropped
+                if responsive:
+                    it["control"] = "cancel"   # worker stops + discards partial
+                    kept.append(it)
+                else:
+                    _delete_partial(it.get("handle"))  # no worker to honor it → drop now
+            q["items"] = kept
         _save_queue(q)
     return {"remaining": len(_load_queue().get("items", []))}
 
@@ -1775,9 +1882,19 @@ def action_queue_control(args):
         if not it:
             return {"ok": False, "error": "id not found"}
         st = it.get("status")
+        # For a downloading item we normally set a cooperative `control` flag the
+        # worker polls between chunks.  But if the worker is dead or wedged (not
+        # responsive), it will NEVER poll the flag — so apply the terminal state
+        # directly, otherwise the row stays "downloading" forever and the UI's
+        # Import button stays disabled (the reported "stuck, can't add new" bug).
+        responsive = _worker_responsive(q)
         if op == "pause":
             if st == "downloading":
-                it["control"] = "pause"          # worker stops + marks paused
+                if responsive:
+                    it["control"] = "pause"
+                else:
+                    it["status"] = "paused"
+                    it.pop("control", None)
             elif st == "pending":
                 it["status"] = "paused"
                 it.pop("control", None)
@@ -1787,7 +1904,7 @@ def action_queue_control(args):
                 it["error"] = None
                 it.pop("control", None)
         elif op == "cancel":
-            if st == "downloading":
+            if st == "downloading" and responsive:
                 it["control"] = "cancel"          # worker stops + discards partial
             else:
                 it["status"] = "cancelled"
@@ -1807,9 +1924,20 @@ def _worker_download(m, conn, item, stop_check=None):
     if _should_stage(dest_path):
         staging_dir = _staging_dir()
         staging_dir.mkdir(parents=True, exist_ok=True)
-    row = conn.execute(
-        "SELECT handle, size, node_json FROM nodes WHERE path=? AND type=0 LIMIT 1", (item["path"],)
-    ).fetchone()
+    # Resolve by the stable MEGA handle captured at enqueue, NOT the path: paths
+    # can collide (duplicate names) and the tree index is rebuilt on a TTL, so a
+    # path lookup can pick the wrong node or spuriously 404 a still-valid file.
+    # Fall back to path only for legacy items that predate stored handles.
+    handle = item.get("handle")
+    row = None
+    if handle:
+        row = conn.execute(
+            "SELECT handle, size, node_json FROM nodes WHERE handle=? LIMIT 1", (handle,)
+        ).fetchone()
+    if row is None:
+        row = conn.execute(
+            "SELECT handle, size, node_json FROM nodes WHERE path=? AND type=0 LIMIT 1", (item["path"],)
+        ).fetchone()
     if not row or not row["node_json"]:
         return {"status": "error", "error": "file no longer in tree index"}
     file_node = json.loads(row["node_json"])
@@ -1871,12 +1999,22 @@ def _worker_loop(server_connection):
         # We are the only worker (singleton). Any item still "downloading" is
         # from a previous worker that died mid-file (kill / restart / reboot) —
         # requeue it so this run retries it; byte-level resume means it picks up
-        # from its kept partial blob, not from zero.
+        # from its kept partial blob, not from zero. HONOR an outstanding
+        # cancel/pause flag rather than restarting a download the user stopped.
         requeued = 0
         for it in q["items"]:
-            if it["status"] == "downloading":
-                it["status"] = "pending"
+            if it["status"] != "downloading":
+                continue
+            ctl = it.get("control")
+            if ctl == "cancel":
+                it["status"] = "cancelled"
                 it.pop("control", None)
+                _delete_partial(it.get("handle"))
+            elif ctl == "pause":
+                it["status"] = "paused"
+                it.pop("control", None)
+            else:
+                it["status"] = "pending"
                 requeued += 1
         _save_queue(q)
     if requeued:
@@ -1907,13 +2045,29 @@ def _worker_loop(server_connection):
                 q = _load_queue()
                 item = next((it for it in q["items"] if it["status"] == "pending"), None)
                 if item is None:
+                    _prune_terminal(q)   # bound the queue once it's drained
                     q["active"] = False
                     q["worker_pid"] = None
                     _save_queue(q)
                     break
+                # Honor a cancel/pause issued while the item was pending/requeued
+                # instead of clearing it and downloading anyway.
+                ctl = item.get("control")
+                if ctl == "cancel":
+                    item["status"] = "cancelled"
+                    item.pop("control", None)
+                    item["finished_at"] = _now()
+                    _delete_partial(item.get("handle"))
+                    _save_queue(q)
+                    continue
+                if ctl == "pause":
+                    item["status"] = "paused"
+                    item.pop("control", None)
+                    _save_queue(q)
+                    continue
                 item["status"] = "downloading"
                 item["started_at"] = _now()
-                item.pop("control", None)  # clear any stale pause/cancel flag
+                item.pop("control", None)
                 _save_queue(q)
             # Per-file cooperative stop: the worker polls the item's control flag
             # between download chunks (set by action_queue_control).

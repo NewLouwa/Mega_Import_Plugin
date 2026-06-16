@@ -1357,9 +1357,16 @@
           setProgressRows(prev => prev.map(r => {
             const it = r.id && byId[r.id];
             if (!it) return r;
+            // Don't let the poll resurrect a row the user just cancelled before
+            // the detached worker has recorded the terminal state — otherwise
+            // the row flips back to "downloading" and the Import button stays
+            // disabled ("stuck downloading, can't add new"). Clear the flag once
+            // the backend confirms a terminal status.
+            if (r.cancelRequested && it.status === "downloading") return r;
             return {
               ...r, status: it.status, error: it.error || null,
               warning: it.warning || null, saved_as: it.saved_as || null,
+              cancelRequested: it.status === "downloading" ? r.cancelRequested : false,
               startedAt: r.startedAt || (it.status === "downloading" ? Date.now() : undefined),
             };
           }));
@@ -1373,7 +1380,12 @@
     const control = React.useCallback(async (row, op) => {
       if (!row.id) return;
       const optimistic = op === "pause" ? "paused" : op === "resume" ? "pending" : "cancelled";
-      setProgressRows(prev => prev.map(r => r.id === row.id ? { ...r, status: optimistic } : r));
+      // cancelRequested pins the optimistic "cancelled" so the queue_status poll
+      // can't revert it before the worker confirms; resume clears it.
+      setProgressRows(prev => prev.map(r => r.id === row.id
+        ? { ...r, status: optimistic,
+            cancelRequested: op === "cancel" ? true : op === "resume" ? false : r.cancelRequested }
+        : r));
       try { await MegaApiClient.queueControl(row.id, op); }
       catch (e) { console.error("[mega-import] queueControl failed", e); }
     }, []);
@@ -1419,18 +1431,20 @@
               error: it.error || null,
             })));
           }
-          // Surface active items (still running / paused) so the user sees the
-          // in-progress import and can pause/resume/cancel it.
+          // Surface ONLY the active items (still running / paused) so the user
+          // sees the in-progress import and can pause/resume/cancel it. Finished
+          // items were just folded into History above — re-listing them here is
+          // what made completed imports pile back up in the panel on every
+          // reopen ("keeps the history even after finished").
           const active = items.filter(it => ["pending", "downloading", "paused"].includes(it.status));
           if (active.length) {
-            setProgressRows(items.map(it => ({
+            setProgressRows(active.map(it => ({
               id: it.id, path: it.path, handle: it.handle, size: it.size,
               status: it.status, error: it.error || null, warning: it.warning || null,
               saved_as: it.saved_as || null,
               startedAt: it.status === "downloading" ? Date.now() : undefined,
             })));
-            const settled = items.filter(it => !["pending", "downloading"].includes(it.status)).length;
-            setProgress({ completed: settled, total: items.length, current: null });
+            setProgress({ completed: 0, total: active.length, current: null });
           }
         } catch (e) { /* silent — no queue / not logged in */ }
       })();
@@ -1621,10 +1635,13 @@
               prev.forEach(r => { if (r.id) prevById[r.id] = r; });
               return p.items.map(it => {
                 const old = prevById[it.id] || {};
+                const heldCancelled = old.cancelRequested && it.status === "downloading";
                 return {
                   id: it.id, path: it.path, handle: it.handle, size: it.size,
-                  status: it.status, error: it.error || null,
+                  status: heldCancelled ? "cancelled" : it.status,
+                  error: it.error || null,
                   warning: it.warning || null, saved_as: it.saved_as || null,
+                  cancelRequested: it.status === "downloading" ? old.cancelRequested : false,
                   startedAt: old.startedAt || (it.status === "downloading" ? Date.now() : undefined),
                   realBytes: old.realBytes,
                 };
@@ -1817,7 +1834,7 @@
       const active = progressRows.filter(r => r.id && ["pending", "downloading", "paused"].includes(r.status));
       if (!active.length) return;
       setProgressRows(prev => prev.map(r =>
-        active.some(a => a.id === r.id) ? { ...r, status: "cancelled" } : r));
+        active.some(a => a.id === r.id) ? { ...r, status: "cancelled", cancelRequested: true } : r));
       toast.success("Cancelling…");
       await Promise.all(active.map(r => MegaApiClient.queueControl(r.id, "cancel").catch(() => {})));
     };
@@ -1825,7 +1842,11 @@
     // True while any import is in flight (started here or reattached from a
     // previous visit). Drives the Cancel button + keeps a new Import from
     // clobbering the in-progress one.
-    const hasActiveImport = progressRows.some(r => ["pending", "downloading", "paused"].includes(r.status));
+    // A row the user just cancelled (cancelRequested) no longer counts as
+    // active, so the Import button re-enables immediately even while the worker
+    // is still tearing the download down.
+    const hasActiveImport = progressRows.some(r =>
+      !r.cancelRequested && ["pending", "downloading", "paused"].includes(r.status));
 
     const selectAllVisible = () => {
       setSelectedItems(prev => Array.from(new Set([...prev, ...visibleSelectablePaths])));
@@ -2040,11 +2061,17 @@
                     : humanSize(row.size))
                 : "";
 
+              // Show the FILE name (basename), not the whole MEGA path: the
+              // path column ellipsizes on the right, which clips exactly the
+              // filename off a long path. Full path stays on hover.
+              const baseName = row.saved_as
+                || (row.path || "").split("/").filter(Boolean).pop()
+                || row.path || "(file)";
               return React.createElement(
                 "div",
-                { key: i, className: `mega-progress-row mega-progress-row-${row.status}`, title: row.error || row.path },
+                { key: row.id || i, className: `mega-progress-row mega-progress-row-${row.status}`, title: row.error || row.path },
                 React.createElement(Icon, { icon, spin: row.status === "downloading" }),
-                React.createElement("span", { className: "mega-progress-row-path" }, row.path),
+                React.createElement("span", { className: "mega-progress-row-path", title: row.path }, baseName),
                 // Inline progress bar (estimated). Shown for downloading + ok rows.
                 React.createElement(
                   "div",

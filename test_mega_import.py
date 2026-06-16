@@ -710,5 +710,111 @@ class TreeIndexTests(unittest.TestCase):
         self.assertEqual(rows[0]["size"], 1048576)
 
 
+class TestQueueStateMachine(unittest.TestCase):
+    """v1.6.0 background-queue robustness fixes (cancel/clear/prune/heartbeat)."""
+
+    def setUp(self):
+        import os
+        import mega_import
+        self.mi = mega_import
+        self.tmpdir = tempfile.mkdtemp()
+        self.qfile = str(Path(self.tmpdir) / "q.json")
+        self._old = os.environ.get("MEGA_QUEUE_FILE")
+        os.environ["MEGA_QUEUE_FILE"] = self.qfile
+
+    def tearDown(self):
+        import os, shutil
+        if self._old is None:
+            os.environ.pop("MEGA_QUEUE_FILE", None)
+        else:
+            os.environ["MEGA_QUEUE_FILE"] = self._old
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _write(self, items, worker_pid=None, next_id=0):
+        self.mi._save_queue({"items": items, "worker_pid": worker_pid,
+                             "active": bool(worker_pid), "next_id": next_id})
+
+    def _read(self):
+        return self.mi._load_queue()
+
+    # --- _prune_terminal ---------------------------------------------------
+    def test_prune_terminal_keeps_recent_errors_and_active(self):
+        items = [{"id": f"a-{i}", "status": "ok", "path": f"/f{i}", "finished_at": 1000 + i}
+                 for i in range(40)]
+        items += [{"id": "err", "status": "error", "path": "/e", "finished_at": 1},
+                  {"id": "dl", "status": "downloading", "path": "/d"},
+                  {"id": "pend", "status": "pending", "path": "/p"}]
+        q = {"items": list(items)}
+        removed = self.mi._prune_terminal(q, keep_recent=10, max_age=0)
+        statuses = [it["status"] for it in q["items"]]
+        self.assertIn("error", statuses)      # failures always kept
+        self.assertIn("downloading", statuses)
+        self.assertIn("pending", statuses)
+        oks = [it for it in q["items"] if it["status"] == "ok"]
+        self.assertEqual(len(oks), 10)        # only the newest 10 ok kept
+        kept = {it["id"] for it in oks}
+        self.assertIn("a-39", kept)
+        self.assertNotIn("a-0", kept)
+        self.assertEqual(removed, 30)
+
+    # --- cancel forces terminal when the worker can't honor the flag -------
+    def test_cancel_downloading_dead_worker_forces_cancelled(self):
+        self._write([{"id": "x", "status": "downloading", "handle": "h1", "path": "/a"}],
+                    worker_pid=999999)  # not a live pid
+        out = self.mi.action_queue_control({"id": "x", "op": "cancel"})
+        self.assertTrue(out["ok"])
+        it = self._read()["items"][0]
+        self.assertEqual(it["status"], "cancelled")
+        self.assertNotIn("control", it)
+
+    def test_cancel_downloading_live_worker_sets_flag(self):
+        import os
+        self._write([{"id": "x", "status": "downloading", "handle": "h1", "path": "/a"}],
+                    worker_pid=os.getpid())  # this test process is alive → responsive
+        self.mi.action_queue_control({"id": "x", "op": "cancel"})
+        it = self._read()["items"][0]
+        self.assertEqual(it["status"], "downloading")
+        self.assertEqual(it.get("control"), "cancel")
+
+    # --- queue_clear semantics --------------------------------------------
+    def test_queue_clear_default_purges_dead_downloading(self):
+        self._write([
+            {"id": "d", "status": "downloading", "handle": "h", "path": "/d"},
+            {"id": "p", "status": "pending", "path": "/p"},
+            {"id": "o", "status": "ok", "path": "/o"},
+        ], worker_pid=999999)
+        self.mi.action_queue_clear({})
+        self.assertEqual(self._read()["items"], [])
+
+    def test_queue_clear_only_done_keeps_active(self):
+        self._write([
+            {"id": "d", "status": "downloading", "path": "/d"},
+            {"id": "p", "status": "pending", "path": "/p"},
+            {"id": "pa", "status": "paused", "path": "/pa"},
+            {"id": "o", "status": "ok", "path": "/o"},
+            {"id": "e", "status": "error", "path": "/e"},
+        ])
+        self.mi.action_queue_clear({"only_done": True})
+        statuses = sorted(it["status"] for it in self._read()["items"])
+        self.assertEqual(statuses, ["downloading", "paused", "pending"])
+
+    # --- status self-heal honors an outstanding cancel on a dead worker ---
+    def test_status_selfheal_honors_pending_cancel(self):
+        self._write([{"id": "d", "status": "downloading", "handle": "h",
+                      "path": "/d", "control": "cancel"}], worker_pid=999999)
+        with patch.object(self.mi, "_ensure_worker", return_value=12345):
+            self.mi.action_queue_status({})
+        it = self._read()["items"][0]
+        self.assertEqual(it["status"], "cancelled")  # NOT requeued to pending
+
+    # --- monotonic ids survive a clear (no cross-batch collision) ----------
+    def test_next_id_survives_clear(self):
+        self._write([{"id": "100-0", "status": "ok"},
+                     {"id": "100-1", "status": "ok"},
+                     {"id": "100-2", "status": "ok"}], next_id=3)
+        self.mi.action_queue_clear({})               # drops the finished items
+        self.assertEqual(self._read().get("next_id"), 3)  # counter preserved → next batch starts at 3
+
+
 if __name__ == "__main__":
     unittest.main()

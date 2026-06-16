@@ -1,5 +1,19 @@
 # Changelog
 
+## v1.6.0 — 2026-06-16
+
+Background-queue robustness pass — fixes four issues reported from real-world prod use: vanishing filenames, off-page stalls, history that never clears, and a cancelled download that left the queue stuck so no new import could start.
+
+### Fixed
+- **Progress rows show the file name, not the whole path.** A row rendered the full MEGA path (`/Big Folder/Season 1/episode.mp4`) in a column that ellipsizes on the right — which clipped off exactly the filename. Rows now show the **basename** (with the full path on hover), so the active download is always identifiable.
+- **Cancelling a download can no longer leave the queue stuck.** Cancelling a *downloading* file only set a flag the worker had to observe between chunks — if the worker was dead or wedged in a stalled socket, the flag was never consumed, the item stayed `downloading`, the live status poll reverted the UI's optimistic "cancelled" back to "downloading", and the **Import button stayed disabled forever** ("can't add new while there are others"). Now: a cancel/pause is applied **immediately and authoritatively** when the worker isn't responsive; the status self-heal **honors an outstanding cancel** instead of restarting the file; "cancel all" (`queue_clear`) actually purges a wedged `downloading` row; the UI pins the cancelled state (`cancelRequested`) so the poll can't resurrect it; and a locally-cancelled row no longer keeps Import disabled.
+- **Off-page stalls recover on their own.** The download used a single 120 s socket timeout, so a half-open MEGA CDN connection could freeze one read for two minutes — no bytes, no progress, no way to cancel. Split into a **(15 s connect, 60 s read)** timeout so a *zero-progress* stall fails fast and the retry resumes from the kept partial (a slow-but-steady link is unaffected — the read timeout is per socket read, not per chunk). Smaller 256 KiB chunks make pause/cancel land sooner and keep the progress bar moving. A dead worker is still auto-respawned (and its interrupted file resumed) on the next `queue_status` poll. New env vars: `MEGA_CONNECT_TIMEOUT`, `MEGA_READ_TIMEOUT`, `MEGA_CHUNK_BYTES`.
+- **Finished imports stop piling up.** The backend queue was append-only — completed items lived in `mega_queue.json` forever and were re-surfaced into the progress panel on **every** reopen (and re-folded into History). Now terminal items are **pruned** (keeping the most recent and all errors) by the worker on drain and opportunistically by `queue_status`, and **reopen surfaces only active rows** (finished ones live in History where they belong).
+
+### Changed
+- Queue item ids are now a **monotonic, persisted counter** instead of `len(queue)` — a `queue_clear` could shrink the list and make a new same-second batch reuse ids, so the UI (which merges rows by id) updated the wrong row. Eliminates that collision.
+- The worker resolves each file by its **stable MEGA handle**, not by re-looking-up the path (paths can collide and the tree index is rebuilt on a TTL), so a queued file can't resolve to the wrong node or spuriously fail mid-queue.
+
 ## v1.5.3 — 2026-06-12
 
 ### Changed
