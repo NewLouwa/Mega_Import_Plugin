@@ -973,4 +973,93 @@
   .title-with-logo h2 {
     font-size: 20px;
   }
-} 
+}
+
+/* ── Help / documentation panel ──────────────────────────────────────── */
+.mega-help-panel {
+  padding: 16px 20px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background-color: #1a242c;
+  color: #c9d1d9;
+  line-height: 1.55;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.mega-help-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mega-help-head h4 {
+  margin: 0;
+  color: #e8eaed;
+  font-size: 18px;
+}
+
+.mega-help-sub {
+  margin: 3px 0 0;
+  font-size: 13px;
+  color: #94a3ad;
+}
+
+.mega-help-section {
+  margin: 14px 0;
+}
+
+.mega-help-section h5 {
+  margin: 0 0 6px;
+  color: #e8565b;            /* MEGA-red accent */
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.mega-help-panel p { margin: 0 0 8px; }
+
+.mega-help-panel ul,
+.mega-help-panel ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+
+.mega-help-panel li { margin-bottom: 4px; }
+
+.mega-help-panel strong { color: #e8eaed; font-weight: 600; }
+
+.mega-help-panel code,
+.mega-help-code {
+  font-family: monospace, var(--mega-emoji);
+  font-size: 12px;
+  background-color: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  padding: 1px 5px;
+  color: #e8eaed;
+}
+
+.mega-help-dl { margin: 0; }
+
+.mega-help-dl dt {
+  font-weight: 600;
+  color: #e8eaed;
+  margin-top: 8px;
+}
+
+.mega-help-dl dd {
+  margin: 0 0 2px;
+  padding-left: 12px;
+  font-size: 13px;
+  color: #b6c0c9;
+}
+
+.mega-help-foot {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  color: #94a3ad;
+}

@@ -3,7 +3,7 @@
   const api = window.PluginApi;
   const React = api.React;
   const { Button, Modal, Form, Alert, Collapse, InputGroup } = api.libraries.Bootstrap;
-  const { faCloudDownloadAlt, faSpinner, faSignInAlt, faFolder, faFile, faHome, faSignOutAlt, faCog, faCheckSquare, faSquare, faFilter, faSearch, faTimes, faHistory, faCheck } = api.libraries.FontAwesomeSolid;
+  const { faCloudDownloadAlt, faSpinner, faSignInAlt, faFolder, faFile, faHome, faSignOutAlt, faCog, faCheckSquare, faSquare, faFilter, faSearch, faTimes, faHistory, faCheck, faQuestionCircle } = api.libraries.FontAwesomeSolid;
   const { Icon } = api.components;
   const { gql, useApolloClient } = api.libraries.Apollo;
 
@@ -1167,6 +1167,99 @@
   };
 
   // HistoryView — read-only list of past imports with filter + status filter.
+  // ── In-app help / documentation page ───────────────────────────────────
+  // Static content (no user input) rendered into the help panel. Structure
+  // follows common Stash plugin help docs: overview → setup → usage →
+  // settings reference → troubleshooting.
+  const HELP_HTML = `
+  <div class="mega-help-head">
+    <span class="mega-help-logo"></span>
+    <div>
+      <h4>MEGA Import — Help</h4>
+      <p class="mega-help-sub">Browse a MEGA.nz account inside Stash and import files to your server.</p>
+    </div>
+  </div>
+
+  <section class="mega-help-section">
+    <h5>Overview</h5>
+    <p>This plugin connects Stash to a MEGA.nz account so you can browse the cloud tree, pick files or whole folders, and import them onto the <strong>Stash server</strong> (not your browser). Downloads run in a background queue that survives closing the tab, resume byte-for-byte after an interruption, and can optionally auto-add to your library, scan, auto-tag and identify on the way in.</p>
+  </section>
+
+  <section class="mega-help-section">
+    <h5>Getting started</h5>
+    <ol>
+      <li>Open <strong>MEGA</strong> from Stash's navigation to launch the browser.</li>
+      <li>Log in with your MEGA <strong>email and password</strong>. The very first login solves MEGA's proof-of-work challenge and can take <strong>a few minutes</strong> — this is normal and happens once; the session is then stored and reused, so later visits are instant.</li>
+      <li>Credentials are sent once to the Stash server to authenticate with MEGA; they are not kept in your browser.</li>
+    </ol>
+    <p>Use <strong>Disconnect</strong> (top-left) to log out and clear the cached tree.</p>
+  </section>
+
+  <section class="mega-help-section">
+    <h5>Browsing &amp; searching</h5>
+    <ul>
+      <li><strong>Navigate</strong> by clicking folders; use the breadcrumb trail or <strong>Back</strong> to go up.</li>
+      <li><strong>Search</strong> the whole tree with a glob pattern (e.g. <code>*.mp4</code>) — press Enter. Clear the search to return to where you were.</li>
+      <li><strong>Filter</strong> the listing by type (All / Videos / Images / custom extensions) and <strong>sort</strong> by size, name, or item count.</li>
+      <li>Large accounts are indexed server-side, so folders open quickly even with hundreds of thousands of nodes.</li>
+    </ul>
+  </section>
+
+  <section class="mega-help-section">
+    <h5>Importing files</h5>
+    <ul>
+      <li><strong>Select</strong> files and/or folders with the checkboxes (use Select-All for the current page), then click <strong>Import Selected</strong>.</li>
+      <li>Selecting a folder opens a <strong>preview</strong> so you can review and exclude individual files (or whole extensions) before downloading.</li>
+      <li>Files download to the destination set in <strong>Settings</strong>. After the queue drains, that destination is scanned so imports appear in your library.</li>
+    </ul>
+  </section>
+
+  <section class="mega-help-section">
+    <h5>The download queue</h5>
+    <p>Downloads run in a detached server-side worker, so they <strong>keep going if you close the tab</strong>. Re-open the page and any in-progress items re-attach automatically; finished ones fold into History.</p>
+    <ul>
+      <li>Each file shows real-byte progress and its own controls: <strong>&#9208; Pause</strong> (keeps the partial), <strong>&#9654; Resume</strong> (continues from the exact byte, or retries a failed/cancelled file) and <strong>&#10005; Cancel</strong> (stops and discards the partial).</li>
+      <li>An interrupted transfer <strong>resumes byte-for-byte</strong> — no re-downloading from zero.</li>
+      <li>The top <strong>Cancel</strong> button stops every active file at once; <strong>Import Selected</strong> stays available so you can queue more.</li>
+    </ul>
+  </section>
+
+  <section class="mega-help-section">
+    <h5>Settings reference</h5>
+    <dl class="mega-help-dl">
+      <dt>Import destination</dt><dd>Server-side path where files land. Leave blank for the plugin default (<code>~/.stash/mega_imports</code>).</dd>
+      <dt>Auto-add to library</dt><dd>Registers the destination as a Stash library path so the post-import scan actually indexes it.</dd>
+      <dt>Generate metadata after scan</dt><dd>Builds sprites, previews, image previews and pHashes for new items.</dd>
+      <dt>Auto-Tag after import</dt><dd>Matches filenames against existing performers, tags and studios.</dd>
+      <dt>Identify after import</dt><dd>Scrapes scene metadata from ThePornDB + StashDB (scenes only).</dd>
+      <dt>Skip already-imported</dt><dd>Skips items already present so re-running an import is cheap and idempotent.</dd>
+      <dt>Concurrency / Page size / Default sort / Filter</dt><dd>Browsing and download tuning defaults.</dd>
+    </dl>
+  </section>
+
+  <section class="mega-help-section">
+    <h5>Import history</h5>
+    <p>The <strong>History</strong> panel lists past imports with a colour-coded <strong>State</strong> (Done / Failed / Paused / Cancelled / …). Filter by text or status; it persists across sessions.</p>
+  </section>
+
+  <section class="mega-help-section">
+    <h5>Troubleshooting</h5>
+    <dl class="mega-help-dl">
+      <dt>Login takes minutes</dt><dd>Expected on the first login (MEGA's proof-of-work). It's cached afterwards.</dd>
+      <dt>A download looks stuck</dt><dd>A stalled connection times out and retries automatically, resuming from its partial. If a file stays wedged, use its <strong>&#10005;</strong> to cancel and <strong>&#9654;</strong> to retry.</dd>
+      <dt>Imports don't appear in the library</dt><dd>Make sure the destination is a Stash library path (enable "Auto-add to library") and that the post-import scan ran.</dd>
+      <dt>Progress panel empty after reopening</dt><dd>It re-attaches on load; if the tab was closed mid-import, give it a moment to pull the queue status.</dd>
+    </dl>
+  </section>
+
+  <p class="mega-help-foot">For the full changelog and internals, see the plugin's <code>PROGRESS.md</code> and <code>TECHNICAL.md</code>.</p>
+  `;
+
+  const HelpView = () => React.createElement("div", {
+    className: "mega-help-panel",
+    dangerouslySetInnerHTML: { __html: HELP_HTML },
+  });
+
   const HistoryView = () => {
     const history = useHistory();
     const entries = history.entries || [];
@@ -1269,6 +1362,7 @@
     const [results, setResults] = React.useState(null);
     const [showSettings, setShowSettings] = React.useState(false);
     const [showHistory, setShowHistory] = React.useState(false);
+    const [showHelp, setShowHelp] = React.useState(false);
     const [settings, setSettings] = useLocalStorage(SETTINGS_STORAGE_KEY, DEFAULT_SETTINGS);
     const [searchQuery, setSearchQuery] = React.useState("");
     const [searchResults, setSearchResults] = React.useState(null); // null = browse mode
@@ -1965,6 +2059,11 @@
             ),
             React.createElement(
               Button,
+              { variant: "outline-secondary", size: "sm", onClick: () => setShowHelp(s => !s), title: "Help" },
+              React.createElement(Icon, { icon: faQuestionCircle })
+            ),
+            React.createElement(
+              Button,
               { variant: "outline-danger", size: "sm", onClick: handleDisconnect, disabled: isLoading, title: "Disconnect from MEGA" },
               React.createElement(Icon, { icon: faSignOutAlt }), " Disconnect"
             )
@@ -2256,6 +2355,15 @@
         { in: showHistory },
         React.createElement("div", { className: "mega-history-panel mb-3" },
           React.createElement(HistoryView, null)
+        )
+      ),
+
+      // Help panel (collapsible)
+      React.createElement(
+        Collapse,
+        { in: showHelp },
+        React.createElement("div", { className: "mb-3" },
+          React.createElement(HelpView, null)
         )
       ),
 

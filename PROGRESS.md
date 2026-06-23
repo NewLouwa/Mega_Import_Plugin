@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.6.1 — 2026-06-23
+
+### Added
+- **Built-in Help page.** A collapsible Help panel is available directly inside the plugin — no need to leave Stash or open external docs. Click the ? button in the action bar to toggle it. Covers the full workflow (login → browse → import), all keyboard shortcuts, progress-bar states, the History panel, Settings (env vars, auto-pipeline, cache controls), and common troubleshooting steps (stuck downloads, authentication errors, space errors). Styled to match the plugin's dark theme with section headings in MEGA red.
+
 ## v1.6.0 — 2026-06-16
 
 Background-queue robustness pass — fixes four issues reported from real-world prod use: vanishing filenames, off-page stalls, history that never clears, and a cancelled download that left the queue stuck so no new import could start.
