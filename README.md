@@ -19,7 +19,11 @@ Browse your MEGA.nz cloud storage from inside Stash, pick files or whole folders
 - **Post-import metadata** — bulk apply tags, performers, studio (auto-create missing entities); optional gallery; `metadataScan` + `metadataAutoTag` + `metadataIdentify` (TPDB / StashDB) pipeline
 - **Persistent login** — session token stored in `localStorage` + silent server-side restore on load (no re-prompt, no re-solving the PoW); only prompts if the token is rejected
 - **Hashcash PoW solver** in pure Python, multi-threaded across all cores — handles MEGA's first-login challenge, then session-cached (paid once)
-- **66 unit tests** for the backend (base64, Hashcash, session round-trip, filename parsing, SQLite index, paced publish, NFS detection)
+- **73 unit tests** for the backend (base64, Hashcash, session round-trip, filename parsing, SQLite index, paced publish, NFS detection, queue state-machine)
+- **Built-in Help page** — click the **?** button in the action bar for a collapsible reference covering the full workflow, keyboard shortcuts, progress states, settings, and troubleshooting, without leaving Stash
+- **Progress rows show the filename**, not the full MEGA path — the basename is displayed in the queue so active downloads are always identifiable (full path visible on hover)
+- **Cancel no longer jams the queue** — cancelling a downloading file takes effect immediately when the worker is unresponsive; a stuck `downloading` row can't keep the Import button disabled forever
+- **Off-page stall recovery** — uses per-socket **(15 s connect, 60 s read)** timeouts so a half-open CDN connection fails fast, and 256 KiB chunks keep pause/cancel landing within seconds
 
 ## Quick start
 
@@ -61,7 +65,7 @@ All MEGA traffic is **server-side** — the browser only ever talks to Stash, an
 | [mega_import.py](mega_import.py) | Python backend: Hashcash solver, session persistence, mega.py wrapper, SQLite tree index, local-staging/paced publish, background download queue + detached worker, action dispatch, MAC-mismatch rescue |
 | [mega_import.yml](mega_import.yml) | Stash plugin manifest. Single task `MEGA Operation` dispatched via `action` arg |
 | [mega_import.css](mega_import.css) | Tile grid + dark theme + modal styling + emoji-capable font stack |
-| [test_mega_import.py](test_mega_import.py) | 66 backend tests, no Stash or MEGA needed |
+| [test_mega_import.py](test_mega_import.py) | 73 backend tests, no Stash or MEGA needed |
 | [install.sh](install.sh) / [install.ps1](install.ps1) | Local + remote installers (rsync/scp fallback over SSH) |
 
 The JS bridge uses **`runPluginOperation`** (synchronous Stash GraphQL mutation) to talk to the Python backend; each call spawns a fresh Python subprocess. Long-running downloads instead run in a **detached worker** spawned by `enqueue` that is *not* a child of the request (Stash kills request subprocesses on client disconnect), so they survive the UI. State persists in the host temp dir: a session JSON, a SQLite tree index, and the download queue JSON.
@@ -79,12 +83,12 @@ Tracked in [INSTALL.md § Roadmap](INSTALL.md#roadmap-post-v1). Highlights of wh
 - Multiple MEGA accounts
 - **Pure-JS rewrite** (drop the Python backend entirely, use a browser MEGA library)
 
-Shipped since v1.0.0: ✅ background download queue (survives the tab), ✅ **byte-level resumable downloads**, ✅ SQLite-indexed browsing.
+Shipped since v1.0.0: ✅ background download queue (survives the tab), ✅ **byte-level resumable downloads**, ✅ SQLite-indexed browsing, ✅ **per-file pause/resume/cancel**, ✅ **queue robustness** (stuck-cancel fix, off-page stall recovery, filename in progress rows), ✅ **built-in help page**.
 
 ## Development
 
 ```sh
-python -m unittest test_mega_import   # 66 tests, pure stdlib
+python -m unittest test_mega_import   # 73 tests, pure stdlib
 node --check mega_import.js           # JS syntax check
 ```
 
